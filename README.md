@@ -160,7 +160,7 @@ HashPoster:
 For support, feature requests, or bug reports:
 
 - GitHub Issues: [Report an issue](https://github.com/phveektor/hashposter/issues)
-- Contact: [support@hashposter.com](mailto:support@hashposter.com)
+- Contact: [support@hashposter.com](mailto:info@hashlytics.io)
 
 Contributions welcome! Please read our [contribution guidelines](CONTRIBUTING.md).
 
