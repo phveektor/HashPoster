@@ -1,0 +1,253 @@
+/**
+ * HashPoster Admin Styles
+ * Modern, clean UI for the plugin settings page
+ */
+
+/* Main container styles */
+.hashposter-settings {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    max-width: 1000px;
+    margin: 20px 0;
+}
+
+/* Header and tabs */
+.hashposter-settings h1 {
+    color: #23282d;
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #f0f0f1;
+}
+
+/* Quick start guide */
+.hashposter-guide {
+    background: #f8f9fa;
+    border-left: 4px solid #0073aa;
+    padding: 15px 20px;
+    margin-bottom: 25px;
+    border-radius: 4px;
+}
+
+.hashposter-guide h2 {
+    margin-top: 0;
+    color: #23282d;
+    font-size: 16px;
+}
+
+.hashposter-guide ol {
+    margin-left: 20px;
+}
+
+.hashposter-tip {
+    color: #0073aa;
+    font-size: 13px;
+    font-style: italic;
+}
+
+/* Tab Navigation */
+#hashposter-tabs {
+    margin-top: 20px;
+}
+
+#hashposter-tabs > ul {
+    display: flex;
+    margin: 0 0 -1px 0;
+    padding: 0;
+    border-bottom: 1px solid #ddd;
+}
+
+#hashposter-tabs > ul li {
+    margin: 0 5px 0 0;
+    list-style: none;
+}
+
+#hashposter-tabs > ul li a {
+    display: block;
+    padding: 10px 15px;
+    background: #f8f9fa;
+    color: #0073aa;
+    text-decoration: none;
+    border: 1px solid #ddd;
+    border-bottom: none;
+    border-radius: 3px 3px 0 0;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+#hashposter-tabs > ul li a:hover,
+#hashposter-tabs > ul li a.active {
+    background: #fff;
+    color: #23282d;
+}
+
+#hashposter-tabs > ul li a.active {
+    border-bottom: 1px solid #fff;
+    margin-bottom: -1px;
+}
+
+/* Tab Content */
+#hashposter-tabs > div {
+    padding: 25px;
+    border: 1px solid #ddd;
+    border-top: none;
+    background: #fff;
+    display: none;
+}
+
+#hashposter-tabs > div:first-of-type {
+    display: block;
+}
+
+/* Section Headers */
+.hashposter-settings h3 {
+    font-size: 18px;
+    color: #23282d;
+    margin-top: 0;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #f0f0f1;
+}
+
+.hashposter-settings h4 {
+    font-size: 15px;
+    margin: 20px 0 10px;
+    color: #23282d;
+}
+
+/* Platform Sections */
+.platform-section, .shortlink-section {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 15px;
+    border: 1px solid #eee;
+    transition: all 0.3s ease;
+}
+
+.platform-section:hover, .shortlink-section:hover {
+    border-color: #ddd;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+/* Form Elements */
+.hashposter-settings input[type="text"], 
+.hashposter-settings input[type="password"],
+.hashposter-settings input[type="number"], 
+.hashposter-settings textarea {
+    width: 100%;
+    max-width: 400px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    transition: border 0.2s ease;
+}
+
+.hashposter-settings input[type="text"]:focus,
+.hashposter-settings input[type="password"]:focus,
+.hashposter-settings input[type="number"]:focus,
+.hashposter-settings textarea:focus {
+    border-color: #0073aa;
+    box-shadow: 0 0 0 1px #0073aa;
+    outline: none;
+}
+
+/* Checkboxes */
+.hashposter-settings input[type="checkbox"] {
+    position: relative;
+    width: 40px;
+    height: 20px;
+    -webkit-appearance: none;
+    background: #e5e5e5;
+    outline: none;
+    border-radius: 10px;
+    box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
+    transition: 0.3s;
+    cursor: pointer;
+    margin-right: 10px;
+    border: none;
+}
+
+.hashposter-settings input[type="checkbox"]:checked {
+    background: #0073aa;
+}
+
+.hashposter-settings input[type="checkbox"]::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    top: 2px;
+    left: 2px;
+    background: #fff;
+    transition: 0.3s;
+    transform: translateX(0);
+}
+
+.hashposter-settings input[type="checkbox"]:checked::before {
+    transform: translateX(20px);
+}
+
+.platform-section label, .shortlink-section label {
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+    margin-bottom: 10px;
+}
+
+/* Platform fields */
+.platform-fields {
+    padding-left: 50px;
+    margin-top: 10px;
+}
+
+/* Tooltip */
+.dashicons-info.tooltip {
+    color: #0073aa;
+    cursor: help;
+    vertical-align: middle;
+    margin-left: 5px;
+}
+
+/* Buttons */
+.hashposter-test-connection {
+    background: #0073aa !important;
+    color: white !important;
+    border: none !important;
+    padding: 8px 12px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    transition: background 0.2s ease !important;
+}
+
+.hashposter-test-connection:hover {
+    background: #006291 !important;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+    .hashposter-settings {
+        padding: 15px;
+    }
+    
+    #hashposter-tabs > ul {
+        flex-wrap: wrap;
+    }
+    
+    #hashposter-tabs > ul li {
+        margin-bottom: 5px;
+    }
+    
+    #hashposter-tabs > div {
+        padding: 15px;
+    }
+    
+    .platform-fields {
+        padding-left: 20px;
+    }
+}
