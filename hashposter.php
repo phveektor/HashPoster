@@ -9,26 +9,82 @@ Author URI: https://github.com/phveektor
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+// Ensure WordPress functions are available
+if ( ! function_exists( 'plugin_dir_path' ) || ! function_exists( 'plugin_dir_url' ) ) {
+    return;
+}
+
 define( 'HASHPOSTER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'HASHPOSTER_URL', plugin_dir_url( __FILE__ ) );
 
 // Autoload classes
 require_once HASHPOSTER_PATH . 'includes/class-api-handler.php';
+require_once HASHPOSTER_PATH . 'includes/class-oauth-handler.php';
 require_once HASHPOSTER_PATH . 'includes/class-settings.php';
 require_once HASHPOSTER_PATH . 'includes/class-post-publisher.php';
+require_once HASHPOSTER_PATH . 'includes/class-bulk-posting.php';
+require_once HASHPOSTER_PATH . 'includes/class-analytics.php';
+require_once HASHPOSTER_PATH . 'includes/class-publisher.php';
 
 class HashPoster {
     public function __construct() {
-        register_activation_hook( __FILE__, array( $this, 'activate' ) );
-        register_deactivation_hook( __FILE__, array( $this, 'deactivate' ) );
+        // Ensure WordPress hook functions are available
+        if ( function_exists( 'register_activation_hook' ) ) {
+            register_activation_hook( __FILE__, array( $this, 'activate' ) );
+        }
+        if ( function_exists( 'register_deactivation_hook' ) ) {
+            register_deactivation_hook( __FILE__, array( $this, 'deactivate' ) );
+        }
 
-        add_action( 'plugins_loaded', array( $this, 'init' ) );
-        add_action( 'admin_notices', array( $this, 'how_to_configure_notice' ) );
-        add_action( 'wp_head', array( $this, 'add_social_meta_tags' ), 5 );
+        if ( function_exists( 'add_action' ) ) {
+            add_action( 'plugins_loaded', array( $this, 'init' ) );
+            add_action( 'admin_notices', array( $this, 'how_to_configure_notice' ) );
+        }
     }
 
     public function activate() {
-        // ...activation logic (e.g., default options)...
+        // Set default settings with all platforms enabled
+        $default_settings = array(
+            'enabled' => '1',
+            'logging' => '0',
+            'scheduling' => '0',
+            'delay_minutes' => '0'
+        );
+
+        $default_api_credentials = array(
+            'x' => array('active' => '1'),
+            'facebook' => array('active' => '1'),
+            'linkedin' => array('active' => '1'),
+            'bluesky' => array('active' => '1')
+        );
+
+        $default_post_cards = array(
+            'template' => '{title} {excerpt} {url}'
+        );
+
+        $default_shortlinks = array(
+            'wordpress' => array('active' => '0'), // Disabled by default for better social media sharing
+            'bitly' => array('active' => '0')
+        );
+
+        // Merge defaults with existing settings to ensure new settings are added
+        if ( function_exists( 'get_option' ) && function_exists( 'update_option' ) ) {
+            $existing_settings = get_option('hashposter_settings', array());
+            $merged_settings = array_merge($default_settings, $existing_settings);
+            update_option('hashposter_settings', $merged_settings);
+
+            $existing_api_credentials = get_option('hashposter_api_credentials', array());
+            $merged_api_credentials = array_merge($default_api_credentials, $existing_api_credentials);
+            update_option('hashposter_api_credentials', $merged_api_credentials);
+            
+            $existing_post_cards = get_option('hashposter_post_cards', array());
+            $merged_post_cards = array_merge($default_post_cards, $existing_post_cards);
+            update_option('hashposter_post_cards', $merged_post_cards);
+
+            $existing_shortlinks = get_option('hashposter_shortlinks', array());
+            $merged_shortlinks = array_merge($default_shortlinks, $existing_shortlinks);
+            update_option('hashposter_shortlinks', $merged_shortlinks);
+        }
     }
 
     public function deactivate() {
@@ -42,63 +98,52 @@ class HashPoster {
         // Initialize post publisher
         new HashPoster_Post_Publisher();
 
+    // Initialize new features
+    new HashPoster_Bulk_Posting();
+    new HashPoster_Analytics();
+
+    // Initialize publisher (replaces separate pipeline)
+    $publisher = new HashPoster_Publisher();
+    if ( function_exists( 'add_action' ) ) {
         // Enqueue admin assets
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
     }
+    }
 
-    public function enqueue_admin_assets() {
-        wp_enqueue_style( 'hashposter-admin', HASHPOSTER_URL . 'assets/css/admin.css', array(), '1.0' );
-        wp_enqueue_script( 'hashposter-admin', HASHPOSTER_URL . 'assets/js/admin.js', array('jquery'), '1.0', true );
-        wp_localize_script( 'hashposter-admin', 'hashposterAdmin', array(
-            'ajax_url' => admin_url( 'admin-ajax.php' ),
-            'nonce'    => wp_create_nonce( 'hashposter_admin' ),
-        ) );
+    public function enqueue_admin_assets( $hook ) {
+        // Only enqueue on HashPoster admin pages
+        $hashposter_pages = array(
+            'toplevel_page_hashposter-settings',
+            'hashposter_page_hashposter-settings',
+            'hashposter_page_hashposter-get-linkedin-org-urn'
+        );
+        
+        if ( ! in_array( $hook, $hashposter_pages ) && strpos( $hook, 'hashposter' ) === false ) {
+            return;
+        }
+        
+        if ( function_exists( 'wp_enqueue_style' ) ) {
+            wp_enqueue_style( 'hashposter-admin', HASHPOSTER_URL . 'assets/css/admin.css', array(), '1.0' );
+        }
+        if ( function_exists( 'wp_enqueue_script' ) ) {
+            wp_enqueue_script( 'hashposter-admin', HASHPOSTER_URL . 'assets/js/admin.js', array(), '1.0', true );
+        }
+        if ( function_exists( 'wp_localize_script' ) && function_exists( 'admin_url' ) && function_exists( 'wp_create_nonce' ) ) {
+            wp_localize_script( 'hashposter-admin', 'hashposterAdmin', array(
+                'ajax_url' => admin_url( 'admin-ajax.php' ),
+                'nonce'    => wp_create_nonce( 'hashposter_admin' ),
+            ) );
+        }
     }
 
     public function how_to_configure_notice() {
         if ( isset($_GET['page']) && $_GET['page'] === 'hashposter-settings' ) {
+            $linkedin_urn_url = function_exists( 'admin_url' ) ? admin_url('admin.php?page=hashposter-get-linkedin-org-urn') : '#';
+            $safe_url = function_exists( 'esc_url' ) ? esc_url($linkedin_urn_url) : htmlspecialchars($linkedin_urn_url, ENT_QUOTES, 'UTF-8');
             echo '<div class="notice notice-info is-dismissible"><p>
                 <strong>HashPoster:</strong> Need help configuring? See the <a href="https://github.com/phveektor/hashposter#readme" target="_blank">setup guide</a> for step-by-step instructions on connecting your social accounts and using API keys.<br>
-                <strong>Tip:</strong> To get your LinkedIn Organization URN, use the <a href="' . admin_url('admin.php?page=hashposter-get-linkedin-org-urn') . '" target="_blank">LinkedIn URN Helper</a> page in your dashboard.
+                <strong>Tip:</strong> To get your LinkedIn Organization URN, use the <a href="' . $safe_url . '" target="_blank">LinkedIn URN Helper</a> page in your dashboard.
             </p></div>';
-        }
-    }
-
-    // Add Open Graph and Twitter Card meta tags for better social previews
-    public function add_social_meta_tags() {
-        if ( is_singular() ) {
-            global $post;
-            setup_postdata($post);
-            $title = esc_attr(get_the_title($post));
-            $desc = esc_attr(get_the_excerpt($post));
-            $url = esc_url(get_permalink($post));
-            $site_name = esc_attr(get_bloginfo('name'));
-            $image = '';
-            if (has_post_thumbnail($post)) {
-                $img = wp_get_attachment_image_src(get_post_thumbnail_id($post), 'large');
-                $image = esc_url($img[0]);
-            }
-            // Twitter Card type
-            $twitter_card = $image ? 'summary_large_image' : 'summary';
-            ?>
-            <!-- HashPoster: Open Graph & Twitter Card -->
-            <meta property="og:title" content="<?php echo $title; ?>" />
-            <meta property="og:description" content="<?php echo $desc; ?>" />
-            <meta property="og:url" content="<?php echo $url; ?>" />
-            <meta property="og:site_name" content="<?php echo $site_name; ?>" />
-            <?php if ($image): ?>
-            <meta property="og:image" content="<?php echo $image; ?>" />
-            <?php endif; ?>
-            <meta name="twitter:card" content="<?php echo $twitter_card; ?>" />
-            <meta name="twitter:title" content="<?php echo $title; ?>" />
-            <meta name="twitter:description" content="<?php echo $desc; ?>" />
-            <meta name="twitter:url" content="<?php echo $url; ?>" />
-            <?php if ($image): ?>
-            <meta name="twitter:image" content="<?php echo $image; ?>" />
-            <?php endif; ?>
-            <!-- /HashPoster -->
-            <?php
-            wp_reset_postdata();
         }
     }
 }

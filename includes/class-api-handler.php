@@ -3,9 +3,35 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 class HashPoster_API_Handler {
-    private $platforms = array( 'x', 'facebook', 'linkedin', 'bluesky', 'reddit' );
+    private $platforms = array( 'x', 'linkedin', 'bluesky', 'facebook' );
     private $shorteners = array( 'wordpress', 'bitly' );
     private $credentials = array();
+
+    /**
+     * Error types and their recovery strategies
+     */
+    private $error_types = array(
+        'authentication' => array(
+            'description' => 'Authentication or authorization errors',
+            'recovery' => array('retry_with_new_token', 'reconnect_account', 'check_permissions')
+        ),
+        'rate_limit' => array(
+            'description' => 'API rate limit exceeded',
+            'recovery' => array('wait_and_retry', 'reduce_frequency', 'upgrade_plan')
+        ),
+        'network' => array(
+            'description' => 'Network connectivity issues',
+            'recovery' => array('retry_request', 'check_connectivity', 'use_proxy')
+        ),
+        'content' => array(
+            'description' => 'Content validation or formatting errors',
+            'recovery' => array('fix_content', 'truncate_content', 'skip_post')
+        ),
+        'api' => array(
+            'description' => 'General API errors',
+            'recovery' => array('retry_request', 'check_api_status', 'contact_support')
+        )
+    );
 
     public function __construct() {
         $this->initialize();
@@ -15,59 +41,77 @@ class HashPoster_API_Handler {
         $this->credentials = get_option( 'hashposter_api_credentials', array() );
     }
 
-    public function connect_platform( $platform ) {
-        // For OAuth-based platforms, you may need to implement OAuth flows here.
-        // For simplicity, we assume credentials are already saved.
-        return $this->validate_credentials( $platform );
-    }
-
-    public function publish_to_platform( $platform, $content, $media = array() ) {
-        if ( ! $this->validate_credentials( $platform ) ) return new WP_Error('invalid_credentials', 'Invalid credentials for ' . $platform);
-        
-        // If media is empty but we have a post ID, try to get the featured image
-        if (empty($media['image']) && !empty($media['post_id'])) {
-            $post_id = $media['post_id'];
-            if (has_post_thumbnail($post_id)) {
-                $image_id = get_post_thumbnail_id($post_id);
-                $image_url = wp_get_attachment_image_url($image_id, 'large');
-                if ($image_url) {
-                    $media['image'] = $image_url;
-                    $media['image_path'] = get_attached_file($image_id);
+    public function validate_credentials( $platform ) {
+        // For X (Twitter), check OAuth 1.0a access tokens
+        if ( $platform === 'x' ) {
+            $oauth_tokens = get_option( 'hashposter_oauth_tokens', array() );
+            if ( ! empty( $oauth_tokens['x'] ) && ! empty( $oauth_tokens['x']['access_token'] ) && ! empty( $oauth_tokens['x']['access_token_secret'] ) ) {
+                // Test the tokens by making a simple API call
+                $credentials = get_option( 'hashposter_api_credentials', array() );
+                $consumer_key = $credentials['x']['client_id'] ?? '';
+                $consumer_secret = $credentials['x']['client_secret'] ?? '';
+                
+                if ( !empty($consumer_key) && !empty($consumer_secret) ) {
+                    require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php';
+                    try {
+                        $connection = new Abraham\TwitterOAuth\TwitterOAuth(
+                            $consumer_key, 
+                            $consumer_secret,
+                            $oauth_tokens['x']['access_token'],
+                            $oauth_tokens['x']['access_token_secret']
+                        );
+                        
+                        // Test with a simple API call to verify credentials (v1.1 API)
+                        $test_result = $connection->get('account/verify_credentials');
+                        
+                        if ( isset($test_result->id) ) {
+                            error_log('[HashPoster DEBUG] X validation - OAuth 1.0a tokens valid and working');
+                            return true;
+                        } else {
+                            error_log('[HashPoster DEBUG] X validation - OAuth 1.0a tokens exist but API test failed: ' . print_r($test_result, true));
+                            return false;
+                        }
+                    } catch (Exception $e) {
+                        error_log('[HashPoster DEBUG] X validation - OAuth 1.0a tokens exist but API test exception: ' . $e->getMessage());
+                        return false;
+                    }
                 }
+                
+                error_log('[HashPoster DEBUG] X validation - OAuth 1.0a tokens exist but missing consumer credentials');
+                return false;
+            }
+
+            error_log('[HashPoster DEBUG] X validation - No valid OAuth 1.0a tokens found');
+            return false;
+        }
+        
+        // For other platforms, check OAuth tokens first
+        $oauth_tokens = get_option( 'hashposter_oauth_tokens', array() );
+        if ( ! empty( $oauth_tokens[ $platform ] ) && ! empty( $oauth_tokens[ $platform ]['access_token'] ) ) {
+            // Check if token is not expired
+            if ( empty( $oauth_tokens[ $platform ]['expires_at'] ) || $oauth_tokens[ $platform ]['expires_at'] > time() ) {
+                return true;
             }
         }
-        
-        switch ( $platform ) {
-            case 'x':
-                return $this->publish_to_x( $content, $media );
-            case 'facebook':
-                return $this->publish_to_facebook( $content, $media );
-            case 'linkedin':
-                return $this->publish_to_linkedin( $content, $media );
-            case 'bluesky':
-                return $this->publish_to_bluesky( $content, $media );
-            case 'reddit':
-                return $this->publish_to_reddit( $content, $media );
-            default:
-                return new WP_Error('unsupported_platform', 'Unsupported platform');
-        }
-    }
 
-    public function validate_credentials( $platform ) {
+        // Fallback to manual credentials
         $this->credentials = get_option( 'hashposter_api_credentials', array() );
         $creds = $this->credentials[ $platform ] ?? array();
         switch ($platform) {
-            case 'x':
-                return !empty($creds['key']) && !empty($creds['secret']) && !empty($creds['access_token']) && !empty($creds['access_token_secret']);
-            case 'facebook':
-                return !empty($creds['access_token']) && !empty($creds['page_id']);
             case 'linkedin':
-                // For business pages: require client_id, client_secret, and organization_urn
-                return !empty($creds['client_id']) && !empty($creds['client_secret']) && !empty($creds['organization_urn']);
+                return !empty($creds['access_token']) || (!empty($creds['client_id']) && !empty($creds['client_secret']));
             case 'bluesky':
-                return isset($creds['handle'], $creds['app_password']) && trim($creds['handle']) !== '' && trim($creds['app_password']) !== '';
-            case 'reddit':
-                return !empty($creds['client_id']) && !empty($creds['client_secret']) && !empty($creds['username']) && !empty($creds['password']) && !empty($creds['subreddit']);
+                $has_handle = isset($creds['handle']) && trim($creds['handle']) !== '';
+                $has_password = !empty($creds['app_password']) || !empty($creds['password']);
+                error_log('[HashPoster DEBUG] Bluesky validation - handle: ' . ($has_handle ? 'YES' : 'NO') . ', app_password: ' . ($has_password ? 'YES' : 'NO'));
+                return $has_handle && $has_password;
+            case 'facebook':
+                $has_app_id = !empty($creds['app_id']);
+                $has_app_secret = !empty($creds['app_secret']);
+                $has_page_id = !empty($creds['page_id']);
+                $has_access_token = !empty($creds['access_token']);
+                error_log('[HashPoster DEBUG] Facebook validation - app_id: ' . ($has_app_id ? 'YES' : 'NO') . ', app_secret: ' . ($has_app_secret ? 'YES' : 'NO') . ', page_id: ' . ($has_page_id ? 'YES' : 'NO') . ', access_token: ' . ($has_access_token ? 'YES' : 'NO'));
+                return $has_app_id && $has_app_secret && $has_page_id && $has_access_token;
             default:
                 return false;
         }
@@ -75,274 +119,447 @@ class HashPoster_API_Handler {
 
     // --- Platform-specific posting methods ---
 
-    private function publish_to_x( $content, $media ) {
-        // X (Twitter) API: Use abraham/twitteroauth for OAuth 1.0a user context
-        // On shared hosting, use the included twitteroauth library
-        $creds = $this->credentials['x'];
-        if (
-            empty($creds['key']) ||
-            empty($creds['secret']) ||
-            empty($creds['access_token']) ||
-            empty($creds['access_token_secret'])
-        ) {
-            return new WP_Error('missing_credentials', 'Missing X (Twitter) credentials.');
+    /**
+     * Generic dispatcher used by other classes to publish to a named platform
+     * @param string $platform Platform key (x, linkedin, bluesky, etc.)
+     * @param string $content The content to publish
+     * @param array $media Optional media array
+     * @return true|WP_Error
+     */
+    public function publish_to_platform( $platform, $content, $media = array() ) {
+        $platform = strtolower( $platform );
+        if ( ! in_array( $platform, $this->platforms ) ) {
+            return new WP_Error( 'unsupported_platform', 'Platform ' . $platform . ' is not supported by HashPoster.' );
         }
 
-        $autoload_path = dirname(__FILE__) . '/twitteroauth/autoload.php';
-        if ( !file_exists($autoload_path) ) {
-            return new WP_Error('dependency_missing', 'TwitterOAuth library not found. Please upload the twitteroauth folder (with autoload.php and src/) to the plugin\'s includes directory.');
+        // Normalize media parameter: allow integer post_id or string image path
+        if ( is_array( $media ) ) {
+            // already normalized by caller (may include 'url' or other keys) - keep as-is
+        } elseif ( is_int( $media ) || ( is_string( $media ) && ctype_digit( $media ) ) ) {
+            $media = array( 'post_id' => intval( $media ) );
+        } elseif ( is_string( $media ) ) {
+            $media = array( 'image' => $media );
+        } else {
+            $media = array();
         }
-        if ( !class_exists('Abraham\TwitterOAuth\TwitterOAuth') ) {
-            require_once $autoload_path;
+
+        switch ( $platform ) {
+            case 'x':
+                $res = $this->publish_to_x( $content, $media );
+                if ( is_array( $res ) && isset( $res['error_info'] ) ) {
+                    return new WP_Error( $res['error_info']['code'] ?? 'api_error', $res['user_message'] ?? json_encode( $res['error_info'] ), $res );
+                }
+                return $res;
+            case 'facebook':
+                $res = $this->publish_to_facebook( $content, $media );
+                if ( is_array( $res ) && isset( $res['error_info'] ) ) {
+                    return new WP_Error( $res['error_info']['code'] ?? 'api_error', $res['user_message'] ?? json_encode( $res['error_info'] ), $res );
+                }
+                return $res;
+            case 'linkedin':
+                $res = $this->publish_to_linkedin( $content, $media );
+                if ( is_array( $res ) && isset( $res['error_info'] ) ) {
+                    return new WP_Error( $res['error_info']['code'] ?? 'api_error', $res['user_message'] ?? json_encode( $res['error_info'] ), $res );
+                }
+                return $res;
+            case 'bluesky':
+                $res = $this->publish_to_bluesky( $content, $media );
+                if ( is_array( $res ) && isset( $res['error_info'] ) ) {
+                    return new WP_Error( $res['error_info']['code'] ?? 'api_error', $res['user_message'] ?? json_encode( $res['error_info'] ), $res );
+                }
+                return $res;
+            default:
+                return new WP_Error( 'unsupported_platform', 'No publish implementation for platform: ' . $platform );
         }
+    }
+
+
+    private function publish_to_x( $content, $media ) {
+        error_log('[HashPoster] Starting X (Twitter) publish attempt via OAuth 1.0a (v1.1 API)');
+        
+        // Check for OAuth 1.0a access tokens
+        $oauth_tokens = get_option( 'hashposter_oauth_tokens', array() );
+        if ( empty( $oauth_tokens['x'] ) || empty( $oauth_tokens['x']['access_token'] ) || empty( $oauth_tokens['x']['access_token_secret'] ) ) {
+            error_log('[HashPoster] X: No OAuth 1.0a access tokens found');
+            return new WP_Error('missing_credentials', 
+                'X (Twitter) is not connected. Please connect your X account in HashPoster settings using OAuth.'
+            );
+        }
+
+        $access_token = $oauth_tokens['x']['access_token'];
+        $access_token_secret = $oauth_tokens['x']['access_token_secret'];
+        error_log('[HashPoster] X: Using OAuth 1.0a authentication');
+
+        // Get credentials
+        $credentials = $this->credentials['x'] ?? array();
+        $consumer_key = $credentials['client_id'] ?? '';
+        $consumer_secret = $credentials['client_secret'] ?? '';
+
+        if ( empty( $consumer_key ) || empty( $consumer_secret ) ) {
+            error_log('[HashPoster] X: Missing consumer credentials');
+            return new WP_Error('missing_credentials', 'X consumer credentials not configured');
+        }
+
+        // Include TwitterOAuth library
+        require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php';
+        error_log('[HashPoster] X: TwitterOAuth class exists: ' . (class_exists('Abraham\TwitterOAuth\TwitterOAuth') ? 'YES' : 'NO'));
 
         try {
-            // Decode HTML entities for better Twitter display
+            $connection = new Abraham\TwitterOAuth\TwitterOAuth(
+                $consumer_key,
+                $consumer_secret,
+                $access_token,
+                $access_token_secret
+            );
+            error_log('[HashPoster] X: TwitterOAuth connection created');
+
+            // Clean content
             $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
             
-            $connection = new \Abraham\TwitterOAuth\TwitterOAuth(
-                $creds['key'],
-                $creds['secret'],
-                $creds['access_token'],
-                $creds['access_token_secret']
+            // Check content length (Twitter limit is 280 characters)
+            if (strlen($content) > 280) {
+                error_log('[HashPoster] X: Content too long (' . strlen($content) . ' chars), truncating to 280');
+                $content = substr($content, 0, 277) . '...';
+            }
+            
+            // For X/Twitter: Ensure URL is at the end for card generation, but don't duplicate it
+            // Twitter cards require the URL to be in the tweet text
+            error_log('[HashPoster] X: Content before URL processing: ' . substr($content, 0, 200) . '...');
+
+            // Prepare tweet data for v1.1 API
+            $tweet_data = array(
+                'status' => $content
             );
-            
-            // Fix: For TwitterOAuth V2 API, we need a different approach to media
-            if (!empty($media['image'])) {
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] Attempting to upload image to X using file: ' . $media['image']);
-                }
-                
-                // Try using file_get_contents for the image
-                try {
-                    $image_data = file_get_contents($media['image']);
-                    if ($image_data) {
-                        // For TwitterOAuth, the best way to upload media
-                        $connection->setApiVersion('1.1');  // Media uploads need to use v1.1 API
-                        $media_upload = $connection->upload('media/upload', ['media' => $image_data]);
-                        $connection->setApiVersion('2');  // Switch back to v2 for posting
-                        
-                        if (isset($media_upload->media_id_string)) {
-                            // For Twitter API v2, we need to use this format
-                            $post_params = [
-                                'text' => $content,
-                                'media' => ['media_ids' => [$media_upload->media_id_string]]
-                            ];
-                            
-                            if (defined('WP_DEBUG') && WP_DEBUG) {
-                                error_log('[HashPoster] X media upload successful. Media ID: ' . $media_upload->media_id_string);
-                            }
-                        } else {
-                            $post_params = ['text' => $content];
-                            if (defined('WP_DEBUG') && WP_DEBUG) {
-                                error_log('[HashPoster] X media upload failed with data: ' . print_r($media_upload, true));
-                            }
-                        }
-                    } else {
-                        $post_params = ['text' => $content];
-                        if (defined('WP_DEBUG') && WP_DEBUG) {
-                            error_log('[HashPoster] X media file could not be read: ' . $media['image']);
-                        }
-                    }
-                } catch (Exception $e) {
-                    $post_params = ['text' => $content];
-                    if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log('[HashPoster] X media exception: ' . $e->getMessage());
-                    }
-                }
-            } else {
-                $post_params = ['text' => $content];
-            }
-            
-            // Now post the tweet with the prepared params
-            $result = $connection->post('tweets', $post_params);
 
-            // Log the response for debugging
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] X (Twitter) API response: ' . print_r($result, true));
-                error_log('[HashPoster] X (Twitter) HTTP code: ' . $connection->getLastHttpCode());
+            // Handle media if provided
+            if ( !empty($media) && is_array($media) ) {
+                error_log('[HashPoster] X: Media provided but X API v1.1 media upload not yet implemented - skipping media');
+                // TODO: Implement X API v1.1 media upload
+                // For now, skip media to test basic posting functionality
             }
 
-            // Improved diagnostics: always return error if not 201 (v2 API returns 201 for success)
-            if ($connection->getLastHttpCode() == 201) {
+            // Post tweet using OAuth 1.0a with v1.1 API
+            error_log('[HashPoster] X: Sending POST request via OAuth 1.0a to v1.1 API');
+            error_log('[HashPoster] X: Tweet data: ' . print_r($tweet_data, true));
+            
+            $start_time = microtime(true);
+            $result = $connection->post('statuses/update', $tweet_data);
+            $end_time = microtime(true);
+            $request_time = round(($end_time - $start_time) * 1000);
+            
+            error_log('[HashPoster] X: HTTP status: ' . $connection->getLastHttpCode());
+            error_log('[HashPoster] X: API request completed in ' . $request_time . 'ms');
+            error_log('[HashPoster] X: API response: ' . print_r($result, true));
+            
+            if (empty($result)) {
+                error_log('[HashPoster] X ERROR: Empty response from API');
+                return new WP_Error('api_error', 'X API error: Empty response from API');
+            }
+
+            // Check for Twitter API errors (v1.1 format)
+            if ( isset($result->errors) ) {
+                $error_message = 'X API error: ';
+                foreach ( $result->errors as $error ) {
+                    $error_message .= ($error->message ?? 'Unknown error') . ' ';
+                }
+                error_log('[HashPoster] X ERROR: ' . $error_message);
+                return new WP_Error('api_error', $error_message);
+            }
+
+            // Check for successful response (v1.1 API)
+            if ( isset($result->id_str) ) {
+                $tweet_id = $result->id_str;
+                error_log('[HashPoster] X SUCCESS: Tweet posted! ID: ' . $tweet_id);
                 return true;
-            } else {
-                $error_msg = isset($result->errors) ? json_encode($result->errors) : json_encode($result);
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] X (Twitter) POST ERROR: ' . $error_msg);
+            }
+
+            // Handle unexpected response
+            $error_message = 'X API error: Unexpected response format';
+            error_log('[HashPoster] X ERROR: ' . $error_message . ' - Response: ' . print_r($result, true));
+            return new WP_Error('api_error', $error_message);
+
+        } catch (Exception $e) {
+            $error_message = 'X API request failed: ' . $e->getMessage();
+            error_log('[HashPoster] X ERROR: ' . $error_message);
+            return new WP_Error('api_error', $error_message);
+        }
+    }
+
+    /**
+     * Upload media to X (Twitter) using OAuth 1.0a
+     */
+    private function upload_x_media( $connection, $media_url ) {
+        try {
+            // Download media to temporary file using WordPress function
+            $tmp_file = download_url( $media_url );
+            if ( is_wp_error( $tmp_file ) ) {
+                throw new Exception( 'Failed to download media: ' . $tmp_file->get_error_message() );
+            }
+
+            // Upload to Twitter using file path
+            $result = $connection->upload( 'media/upload', array( 'media' => $tmp_file ) );
+            
+            error_log('[HashPoster] X media upload result: ' . print_r($result, true));
+
+            // Clean up temporary file
+            @unlink( $tmp_file );
+
+            // Check for upload errors
+            if ( isset($result->errors) ) {
+                $error_message = 'Twitter media upload failed: ';
+                foreach ( $result->errors as $error ) {
+                    $error_message .= ($error->message ?? 'Unknown error') . ' ';
                 }
-                return new WP_Error('api_error', 'X (Twitter) API error: ' . $error_msg);
+                throw new Exception( $error_message );
             }
-        } catch (\Exception $e) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] X (Twitter) Exception: ' . $e->getMessage());
+
+            if ( isset( $result->media_id_string ) ) {
+                return $result->media_id_string;
+            } else {
+                throw new Exception( 'Twitter media upload failed: Invalid response format - ' . print_r( $result, true ) );
             }
-            return new WP_Error('api_error', 'X (Twitter) Exception: ' . $e->getMessage());
+        } catch ( Exception $e ) {
+            error_log( '[HashPoster] X media upload error: ' . $e->getMessage() );
+            return false;
         }
     }
 
     private function publish_to_facebook( $content, $media ) {
-        // Facebook Graph API: Use /{page-id}/feed with a Page Access Token
-        $creds = $this->credentials['facebook'];
-        if (empty($creds['access_token']) || empty($creds['page_id'])) {
-            return new WP_Error('missing_credentials', 'Missing Facebook credentials.');
+        // Always try manual credentials first (more reliable)
+        $manual_creds = $this->credentials['facebook'] ?? array();
+        $oauth_tokens = get_option( 'hashposter_oauth_tokens', array() );
+        
+        // Prefer manual credentials if both access_token and page_id are present
+        if ( !empty($manual_creds['access_token']) && !empty($manual_creds['page_id']) ) {
+            $creds = $manual_creds;
+            error_log('[HashPoster DEBUG] Facebook using manual credentials (preferred)');
+        } elseif ( ! empty( $oauth_tokens['facebook'] ) && ! empty( $oauth_tokens['facebook']['access_token'] ) ) {
+            $creds = $oauth_tokens['facebook'];
+            error_log('[HashPoster DEBUG] Facebook using OAuth tokens (fallback)');
+        } else {
+            $creds = $manual_creds; // Use manual even if incomplete for better error messaging
+            error_log('[HashPoster DEBUG] Facebook using manual credentials (default)');
         }
+
+        // Debug logging to see what credentials we have
+        error_log('[HashPoster DEBUG] Facebook credentials - access_token present: ' . (!empty($creds['access_token']) ? 'YES' : 'NO'));
+        error_log('[HashPoster DEBUG] Facebook credentials - page_id present: ' . (!empty($creds['page_id']) ? 'YES' : 'NO'));
+        error_log('[HashPoster DEBUG] Facebook credentials keys: ' . implode(', ', array_keys($creds ?? array())));
+
+        if (empty($creds['access_token']) || empty($creds['page_id'])) {
+            return $this->handle_error(new WP_Error('missing_credentials', 'Missing Facebook credentials (access token and page ID required). Please connect via OAuth or fill in manual credentials.'), 'facebook');
+        }
+
+        // First, verify the access token is still valid
+        $verify_endpoint = 'https://graph.facebook.com/me?fields=id,name&access_token=' . $creds['access_token'];
+        $verify_response = wp_remote_get($verify_endpoint, array('timeout' => 15));
+
+        if (is_wp_error($verify_response)) {
+            return $this->handle_error(new WP_Error('token_verification_failed', 'Facebook token verification failed: ' . $verify_response->get_error_message()), 'facebook');
+        }
+        
+        $verify_code = wp_remote_retrieve_response_code($verify_response);
+        if ($verify_code !== 200) {
+            $verify_body = wp_remote_retrieve_body($verify_response);
+            $error_data = json_decode($verify_body, true);
+
+            if (isset($error_data['error']['message'])) {
+                $error_message = $error_data['error']['message'];
+
+                // Handle specific Facebook token errors
+                if (strpos($error_message, 'session is invalid') !== false ||
+                    strpos($error_message, 'Invalid OAuth access token') !== false ||
+                    strpos($error_message, 'Error validating access token') !== false) {
+                    return $this->handle_error(new WP_Error('token_expired',
+                        'Facebook access token has expired or is invalid. Please generate a new Page Access Token from Facebook Developers Console and update it in the plugin settings.'), 'facebook');
+                }
+
+                if (strpos($error_message, 'permissions') !== false) {
+                    return $this->handle_error(new WP_Error('insufficient_permissions',
+                        'Facebook app lacks required permissions. Please ensure your Facebook app has the following permissions: pages_manage_posts, pages_show_list, publish_pages.'), 'facebook');
+                }
+
+                return $this->handle_error(new WP_Error('token_invalid', 'Facebook access token is invalid: ' . $error_message), 'facebook');
+            }
+
+            return $this->handle_error(new WP_Error('token_verification_failed', 'Facebook token verification failed: ' . $verify_body), 'facebook');
+        }
+
         $endpoint = 'https://graph.facebook.com/' . $creds['page_id'] . '/feed';
         $body = array(
             'message' => $content,
             'access_token' => $creds['access_token'],
         );
+
+        // Image uploads disabled: rely on URL cards and link preview
+        // Prefer the pipeline-provided url metadata (passed in media['url']) so the URL is attached as metadata
+        if (!empty($media['url'])) {
+            $body['link'] = $media['url'];
+        } elseif (preg_match('/https?:\/\/[^\s]+/', $content, $matches)) {
+            $body['link'] = $matches[0];
+        }
+
         $args = array(
             'body'    => $body,
             'timeout' => 15,
         );
+
         $response = wp_remote_post($endpoint, $args);
-        if (is_wp_error($response)) return $response;
-        $code = wp_remote_retrieve_response_code($response);
-        if ($code !== 200) {
-            return new WP_Error('api_error', 'Facebook API error: ' . wp_remote_retrieve_body($response));
+        if (is_wp_error($response)) {
+            return $this->handle_error(new WP_Error('api_error', 'Facebook API connection failed: ' . $response->get_error_message()), 'facebook');
         }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+
+        if ($code !== 200) {
+            $error_data = json_decode($response_body, true);
+
+            if (isset($error_data['error']['message'])) {
+                $error_message = $error_data['error']['message'];
+
+                // Handle specific posting errors
+                if (strpos($error_message, 'session is invalid') !== false ||
+                    strpos($error_message, 'Invalid OAuth access token') !== false) {
+                    return $this->handle_error(new WP_Error('token_expired',
+                        'Facebook access token has expired during posting. Please refresh your Page Access Token.'), 'facebook');
+                }
+
+                if (strpos($error_message, 'publish_to_groups') !== false ||
+                    strpos($error_message, 'pages_read_engagement') !== false ||
+                    strpos($error_message, 'pages_manage_posts') !== false) {
+                    return $this->handle_error(new WP_Error('insufficient_page_permissions',
+                        'Facebook posting failed due to insufficient permissions. For pages: ensure your app has pages_read_engagement and pages_manage_posts permissions, and you are an admin of the page. For groups: ensure publish_to_groups permission is granted.'), 'facebook');
+                }
+
+                if (strpos($error_message, 'Invalid parameter') !== false) {
+                    return $this->handle_error(new WP_Error('invalid_content',
+                        'Facebook rejected the post content. Please check for invalid characters or formatting.'), 'facebook');
+                }
+
+                return $this->handle_error(new WP_Error('api_error', 'Facebook API error: ' . $error_message), 'facebook');
+            }
+
+            return $this->handle_error(new WP_Error('api_error', 'Facebook API error (HTTP ' . $code . '): ' . $response_body), 'facebook');
+        }
+
+        error_log('[HashPoster] Facebook post successful');
         return true;
     }
 
     private function publish_to_linkedin( $content, $media ) {
-        // LinkedIn: Post to organization (company) page using w_member_social
-        $creds = $this->credentials['linkedin'];
-        if (
-            empty($creds['client_id']) ||
-            empty($creds['client_secret']) ||
-            empty($creds['organization_urn'])
-        ) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] LinkedIn missing credentials');
+        // Check for OAuth tokens first
+        $oauth_tokens = get_option( 'hashposter_oauth_tokens', array() );
+        if ( ! empty( $oauth_tokens['linkedin'] ) && ! empty( $oauth_tokens['linkedin']['access_token'] ) ) {
+            $access_token = $oauth_tokens['linkedin']['access_token'];
+            $organization_urn = $oauth_tokens['linkedin']['organization_urn'] ?? '';
+        } else {
+            // Fallback to manual credentials
+            $creds = $this->credentials['linkedin'];
+            $access_token = $creds['access_token'] ?? '';
+            $organization_urn = $creds['organization_urn'] ?? '';
+        }
+
+        if ( empty( $access_token ) ) {
+            $error = new WP_Error('missing_credentials', 'LinkedIn access token is required for posting. Please connect your LinkedIn account via OAuth.');
+            return $this->handle_error($error, 'linkedin');
+        }
+
+        // If organization_urn provided, post as organization using newer Share API
+        if (!empty($creds['organization_urn'])) {
+            // Build organization post payload using Share API
+            $endpoint = 'https://api.linkedin.com/v2/shares';
+            // Use Share API format for organization posting (removed visibility field due to API permissions)
+            $body = [
+                'owner' => $creds['organization_urn'],
+                'text' => [
+                    'text' => $content
+                ]
+            ];
+            
+            // If pipeline provided a URL, include it for link preview
+            if (!empty($media['url'])) {
+                $body['content'] = [
+                    'contentEntities' => [
+                        [
+                            'entityLocation' => $media['url'],
+                            'thumbnails' => []
+                        ]
+                    ],
+                    'title' => substr($content, 0, 200)
+                ];
             }
-            return new WP_Error('missing_credentials', 'Missing LinkedIn business page credentials.');
-        }
-
-        // You must obtain an access token using OAuth 2.0 with w_member_social scope.
-        $access_token = $creds['access_token'] ?? '';
-        if (empty($access_token)) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] LinkedIn missing access token');
+            $args = [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $access_token,
+                    'Content-Type'  => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ],
+                'body' => wp_json_encode($body),
+                'timeout' => 15,
+            ];
+            $response = wp_remote_post($endpoint, $args);
+            if (is_wp_error($response)) return $this->handle_error($response, 'linkedin');
+            $code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            if ($code !== 201 && $code !== 200) {
+                $error = new WP_Error('api_error', 'LinkedIn API error: ' . $response_body . ' (HTTP ' . $code . ')');
+                return $this->handle_error($error, 'linkedin');
             }
-            return new WP_Error('missing_credentials', 'LinkedIn access token is required for posting.');
+            error_log('[HashPoster] LinkedIn organization post successful');
+            return true;
         }
 
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[HashPoster] LinkedIn attempting to post with org URN: ' . $creds['organization_urn']);
+        // Otherwise post as the authenticated member
+        $author_urn = $this->get_linkedin_person_urn($access_token);
+        if (is_wp_error($author_urn)) {
+            $error = new WP_Error('urn_error', '[HashPoster] LinkedIn: Failed to get person URN: ' . $author_urn->get_error_message());
+            return $this->handle_error($error, 'linkedin');
         }
 
+        // Use the modern ugcPosts API for better article preview support
         $endpoint = 'https://api.linkedin.com/v2/ugcPosts';
         
-        // Base share content
-        $share_content = [
-            'shareCommentary' => ['text' => $content],
-            'shareMediaCategory' => 'NONE'
-        ];
-        
-        // If media image exists, prepare it for LinkedIn
-        if (!empty($media['image'])) {
-            try {
-                // LinkedIn requires a more complex flow for images
-                // First register the image upload
-                $register_endpoint = 'https://api.linkedin.com/v2/assets?action=registerUpload';
-                $register_body = [
-                    'registerUploadRequest' => [
-                        'recipes' => ['urn:li:digitalmediaRecipe:feedshare-image'],
-                        'owner' => $creds['organization_urn'],
-                        'serviceRelationships' => [
-                            [
-                                'relationshipType' => 'OWNER',
-                                'identifier' => 'urn:li:userGeneratedContent'
-                            ]
-                        ]
-                    ]
-                ];
-                
-                $register_args = [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $access_token,
-                        'Content-Type'  => 'application/json',
-                        'X-Restli-Protocol-Version' => '2.0.0'
-                    ],
-                    'body' => wp_json_encode($register_body),
-                    'timeout' => 15,
-                ];
-                
-                $register_response = wp_remote_post($register_endpoint, $register_args);
-                
-                if (!is_wp_error($register_response) && wp_remote_retrieve_response_code($register_response) === 200) {
-                    $register_data = json_decode(wp_remote_retrieve_body($register_response), true);
-                    
-                    if (!empty($register_data['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl']) &&
-                        !empty($register_data['value']['asset'])) {
-                        
-                        $upload_url = $register_data['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl'];
-                        $asset_id = $register_data['value']['asset'];
-                        
-                        // Upload the image
-                        $image_data = file_get_contents($media['image']);
-                        if ($image_data) {
-                            $upload_args = [
-                                'headers' => [
-                                    'Authorization' => 'Bearer ' . $access_token,
-                                ],
-                                'body' => $image_data,
-                                'method' => 'PUT',
-                                'timeout' => 30,
-                            ];
-                            
-                            $upload_response = wp_remote_request($upload_url, $upload_args);
-                            
-                            if (!is_wp_error($upload_response) && 
-                                wp_remote_retrieve_response_code($upload_response) === 201) {
-                                
-                                // Successfully uploaded, now attach to post
-                                $share_content['shareMediaCategory'] = 'IMAGE';
-                                $share_content['media'] = [[
-                                    'status' => 'READY',
-                                    'description' => [
-                                        'text' => substr($content, 0, 200)
-                                    ],
-                                    'media' => $asset_id,
-                                    'title' => [
-                                        'text' => get_the_title($media['post_id']) ?? 'Post'
-                                    ]
-                                ]];
-                                
-                                if (defined('WP_DEBUG') && WP_DEBUG) {
-                                    error_log('[HashPoster] LinkedIn image upload successful: ' . $asset_id);
-                                }
-                            } else {
-                                if (defined('WP_DEBUG') && WP_DEBUG) {
-                                    error_log('[HashPoster] LinkedIn image upload failed: ' . 
-                                        print_r($upload_response, true));
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log('[HashPoster] LinkedIn image registration failed: ' . 
-                            print_r($register_response, true));
-                    }
-                }
-            } catch (Exception $e) {
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] LinkedIn image exception: ' . $e->getMessage());
-                }
-            }
+        // Get URL from media payload (preferred) or extract from content as fallback
+        $url_for_preview = null;
+        if (!empty($media['url'])) {
+            $url_for_preview = $media['url'];
+            error_log('[HashPoster LinkedIn DEBUG] URL from media payload: ' . $url_for_preview);
+        } elseif (preg_match('/https?:\/\/[^\s]+/', $content, $url_matches)) {
+            $url_for_preview = trim($url_matches[0]);
+            error_log('[HashPoster LinkedIn DEBUG] URL extracted from content: ' . $url_for_preview);
         }
         
+        // Build UGC post with article share (forces OG card preview)
         $body = [
-            'author' => $creds['organization_urn'],
+            'author' => $author_urn,
             'lifecycleState' => 'PUBLISHED',
             'specificContent' => [
-                'com.linkedin.ugc.ShareContent' => $share_content
+                'com.linkedin.ugc.ShareContent' => [
+                    'shareCommentary' => [
+                        'text' => $content
+                    ],
+                    'shareMediaCategory' => 'ARTICLE'
+                ]
             ],
-            'visibility' => ['com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC']
+            'visibility' => [
+                'com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC'
+            ]
         ];
         
+        // Add article media with URL for OG scraping - this triggers rich preview
+        if (!empty($url_for_preview)) {
+            $body['specificContent']['com.linkedin.ugc.ShareContent']['media'] = [
+                [
+                    'status' => 'READY',
+                    'originalUrl' => $url_for_preview
+                ]
+            ];
+            error_log('[HashPoster LinkedIn DEBUG] Using ugcPosts API with article media for OG card preview');
+        }
+        
+        // Debug: Log the exact content being sent to LinkedIn
+        error_log('[HashPoster LinkedIn DEBUG] Content text (no inline URL): ' . substr($content, 0, 500));
         $args = [
             'headers' => [
                 'Authorization' => 'Bearer ' . $access_token,
@@ -352,254 +569,15 @@ class HashPoster_API_Handler {
             'body' => wp_json_encode($body),
             'timeout' => 15,
         ];
-        
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[HashPoster] LinkedIn request body: ' . print_r($body, true));
-        }
-        
         $response = wp_remote_post($endpoint, $args);
-        
-        if (is_wp_error($response)) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] LinkedIn API WP_Error: ' . $response->get_error_message());
-            }
-            return $response;
-        }
-        
+        if (is_wp_error($response)) return $this->handle_error($response, 'linkedin');
         $code = wp_remote_retrieve_response_code($response);
         $response_body = wp_remote_retrieve_body($response);
-        
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[HashPoster] LinkedIn API response code: ' . $code);
-            error_log('[HashPoster] LinkedIn API response body: ' . $response_body);
+        if ($code !== 201 && $code !== 200) {
+            $error = new WP_Error('api_error', 'LinkedIn API error: ' . $response_body . ' (HTTP ' . $code . ')');
+            return $this->handle_error($error, 'linkedin');
         }
-        
-        if ($code !== 201) {
-            return new WP_Error('api_error', 'LinkedIn API error: ' . $response_body);
-        }
-        
-        return true;
-    }
-
-    private function publish_to_bluesky( $content, $media ) {
-        // Bluesky AT Protocol: Use ATProto endpoints for login and posting
-        $creds = $this->credentials['bluesky'];
-        if (empty($creds['handle']) || empty($creds['app_password'])) {
-            return new WP_Error('missing_credentials', 'Missing Bluesky credentials.');
-        }
-        // Step 1: Login to get JWT and DID
-        $login = wp_remote_post('https://bsky.social/xrpc/com.atproto.server.createSession', array(
-            'headers' => array('Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array(
-                'identifier' => $creds['handle'],
-                'password'   => $creds['app_password'],
-            )),
-            'timeout' => 15,
-        ));
-        if (is_wp_error($login)) return $login;
-        $login_body = json_decode(wp_remote_retrieve_body($login), true);
-        if (empty($login_body['accessJwt']) || empty($login_body['did'])) {
-            return new WP_Error(
-                'api_error',
-                'Bluesky login failed: ' . wp_remote_retrieve_body($login)
-            );
-        }
-        $jwt = $login_body['accessJwt'];
-        $did = $login_body['did'];
-        
-        // Modify the record to properly create clickable links in Bluesky
-        $text = $content;
-        // Parse any URLs in the content for embedding - don't automatically convert to Bitly
-        preg_match_all('/https?:\/\/[^\s]+/', $text, $matches);
-        
-        // Prepare facets for URL linking as they appear in the original content
-        $facets = [];
-        foreach ($matches[0] as $url) {
-            $start = strpos($text, $url);
-            if ($start !== false) {
-                $end = $start + strlen($url);
-                $facets[] = [
-                    'index' => [
-                        'byteStart' => $start,
-                        'byteEnd' => $end
-                    ],
-                    'features' => [
-                        [
-                            '$type' => 'app.bsky.richtext.facet#link',
-                            'uri' => $url  // Use the URL exactly as it appears in content
-                        ]
-                    ]
-                ];
-            }
-        }
-        
-        // Enhanced record with media if available
-        $record = [
-            'text' => $text,
-            '$type' => 'app.bsky.feed.post',
-            'createdAt' => gmdate('c'),
-        ];
-        
-        if (!empty($facets)) {
-            $record['facets'] = $facets;
-        }
-        
-        // If we have a featured image, attach it to the Bluesky post
-        if (!empty($media['image'])) {
-            // For Bluesky, we need to upload the image to their server first
-            $image_data = file_get_contents($media['image']);
-            
-            if ($image_data) {
-                $boundary = wp_generate_password(24, false);
-                $image_args = [
-                    'headers' => [
-                        'Authorization' => 'Bearer ' . $jwt,
-                        'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
-                    ],
-                    'timeout' => 30,
-                ];
-                
-                // Create multipart body
-                $body = '--' . $boundary . "\r\n";
-                $body .= 'Content-Disposition: form-data; name="file"; filename="image.jpg"' . "\r\n";
-                $body .= 'Content-Type: image/jpeg' . "\r\n\r\n";
-                $body .= $image_data . "\r\n";
-                $body .= '--' . $boundary . '--';
-                
-                $image_args['body'] = $body;
-                
-                // Upload image
-                $upload_response = wp_remote_post(
-                    'https://bsky.social/xrpc/com.atproto.repo.uploadBlob',
-                    $image_args
-                );
-                
-                if (!is_wp_error($upload_response) && 
-                    wp_remote_retrieve_response_code($upload_response) === 200) {
-                    
-                    $blob_data = json_decode(wp_remote_retrieve_body($upload_response), true);
-                    
-                    if (!empty($blob_data['blob'])) {
-                        // Add image to post
-                        $record['embed'] = [
-                            '$type' => 'app.bsky.embed.images',
-                            'images' => [
-                                [
-                                    'alt' => get_the_title($media['post_id']) ?? 'Image',
-                                    'image' => $blob_data['blob']
-                                ]
-                            ]
-                        ];
-                        
-                        if (defined('WP_DEBUG') && WP_DEBUG) {
-                            error_log('[HashPoster] Bluesky image upload successful: ' . print_r($blob_data, true));
-                        }
-                    }
-                } else {
-                    if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log('[HashPoster] Bluesky image upload failed: ' . 
-                            (is_wp_error($upload_response) ? 
-                            $upload_response->get_error_message() : 
-                            wp_remote_retrieve_body($upload_response)));
-                    }
-                }
-            }
-        }
-        
-        // Step 2: Post with enhanced record structure
-        $endpoint = 'https://bsky.social/xrpc/com.atproto.repo.createRecord';
-        $body = [
-            'repo' => $did,
-            'collection' => 'app.bsky.feed.post',
-            'record' => $record,
-        ];
-        
-        $args = array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $jwt,
-                'Content-Type'  => 'application/json',
-            ),
-            'body'    => wp_json_encode($body),
-            'timeout' => 15,
-        );
-        try {
-            $response = wp_remote_post($endpoint, $args);
-            // Log the response for debugging
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Bluesky API response: ' . print_r($response, true));
-            }
-            // Improved diagnostics: check for error in response
-            if (is_wp_error($response)) {
-                error_log('[HashPoster] Bluesky WP_Error: ' . $response->get_error_message());
-                return $response;
-            }
-            $code = is_array($response) && isset($response['response']['code']) ? $response['response']['code'] : null;
-            if ($code == 200) {
-                return true;
-            } else {
-                $body = is_array($response) && isset($response['body']) ? $response['body'] : '';
-                error_log('[HashPoster] Bluesky POST ERROR: ' . $body);
-                return new WP_Error('api_error', 'Bluesky API error: ' . $body);
-            }
-        } catch (\Exception $e) {
-            error_log('[HashPoster] Bluesky Exception: ' . $e->getMessage());
-            return new WP_Error('api_error', 'Bluesky Exception: ' . $e->getMessage());
-        }
-    }
-
-    private function publish_to_reddit( $content, $media ) {
-        $creds = $this->credentials['reddit'];
-        if (
-            empty($creds['client_id']) ||
-            empty($creds['client_secret']) ||
-            empty($creds['username']) ||
-            empty($creds['password']) ||
-            empty($creds['subreddit'])
-        ) {
-            return new WP_Error('missing_credentials', 'Missing Reddit credentials.');
-        }
-
-        // Step 1: Get access token
-        $token_response = wp_remote_post('https://www.reddit.com/api/v1/access_token', array(
-            'headers' => array(
-                'Authorization' => 'Basic ' . base64_encode($creds['client_id'] . ':' . $creds['client_secret']),
-                'User-Agent' => 'HashPoster/1.0 by ' . $creds['username'],
-            ),
-            'body' => array(
-                'grant_type' => 'password',
-                'username' => $creds['username'],
-                'password' => $creds['password'],
-            ),
-            'timeout' => 15,
-        ));
-        if (is_wp_error($token_response)) return $token_response;
-        $token_data = json_decode(wp_remote_retrieve_body($token_response), true);
-        if (empty($token_data['access_token'])) {
-            return new WP_Error('api_error', 'Reddit token error: ' . wp_remote_retrieve_body($token_response));
-        }
-        $access_token = $token_data['access_token'];
-
-        // Step 2: Post to subreddit
-        $post_response = wp_remote_post('https://oauth.reddit.com/api/submit', array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $access_token,
-                'User-Agent' => 'HashPoster/1.0 by ' . $creds['username'],
-            ),
-            'body' => array(
-                'sr' => $creds['subreddit'],
-                'kind' => 'self',
-                'title' => wp_trim_words($content, 15, '...'),
-                'text' => $content,
-                'resubmit' => true,
-                'api_type' => 'json',
-            ),
-            'timeout' => 15,
-        ));
-        if (is_wp_error($post_response)) return $post_response;
-        $post_data = json_decode(wp_remote_retrieve_body($post_response), true);
-        if (!empty($post_data['json']['errors'])) {
-            return new WP_Error('api_error', 'Reddit API error: ' . json_encode($post_data['json']['errors']));
-        }
+        error_log('[HashPoster] LinkedIn member post successful');
         return true;
     }
 
@@ -608,143 +586,864 @@ class HashPoster_API_Handler {
      * Returns string urn:li:person:xxxxxxx or WP_Error.
      */
     public function get_linkedin_person_urn( $access_token ) {
-        $endpoint = 'https://api.linkedin.com/v2/me';
+        // Try multiple endpoints to find one that works
+        $endpoints = array(
+            array('url' => 'https://api.linkedin.com/v2/userinfo', 'type' => 'oauth2'),
+            array('url' => 'https://api.linkedin.com/v2/me', 'type' => 'v2'),
+            array('url' => 'https://api.linkedin.com/v2/people/~', 'type' => 'people')
+        );
+
+        foreach ($endpoints as $endpoint) {
+            error_log('[HashPoster] LinkedIn URN - Trying ' . $endpoint['type'] . ' endpoint: ' . $endpoint['url']);
+
+            $args = array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $access_token,
+                    'Connection'    => 'Keep-Alive',
+                    'Accept'        => 'application/json',
+                ),
+                'timeout' => 15,
+            );
+
+            $response = wp_remote_get($endpoint['url'], $args);
+
+            if (!is_wp_error($response)) {
+                $code = wp_remote_retrieve_response_code($response);
+                $response_body = wp_remote_retrieve_body($response);
+
+                if ($code === 200) {
+                    $body = json_decode($response_body, true);
+
+                    // Different endpoints return different user ID fields
+                    $user_id = null;
+                    if ($endpoint['type'] === 'oauth2' && isset($body['sub'])) {
+                        $user_id = $body['sub'];
+                    } elseif (($endpoint['type'] === 'v2' || $endpoint['type'] === 'people') && isset($body['id'])) {
+                        $user_id = $body['id'];
+                    }
+
+                    if ($user_id) {
+                        error_log('[HashPoster] LinkedIn URN - SUCCESS with ' . $endpoint['type'] . ' endpoint, got user ID: ' . $user_id);
+                        return 'urn:li:person:' . $user_id;
+                    }
+                } else {
+                    error_log('[HashPoster] LinkedIn URN - ' . $endpoint['type'] . ' endpoint failed: HTTP ' . $code . ' - ' . $response_body);
+                }
+            } else {
+                error_log('[HashPoster] LinkedIn URN - WP Error for ' . $endpoint['type'] . ' endpoint: ' . $response->get_error_message());
+            }
+        }
+
+        return new WP_Error('api_error', 'All LinkedIn API endpoints failed to retrieve person URN. Token may be invalid or app may not be properly configured.');
+    }
+
+    /**
+     * Fallback method: Publish to LinkedIn organization page
+     */
+    private function publish_to_linkedin_organization($content, $media, $organization_urn, $access_token) {
+        // Try using the Shares API instead of UGC API for organization posting
+        $endpoint = 'https://api.linkedin.com/v2/shares';
+
+        $body = array(
+            'owner' => $organization_urn,
+            'text' => array(
+                'text' => $content
+            ),
+            'distribution' => array(
+                'linkedInDistributionTarget' => (object)array()
+            )
+        );
+
         $args = array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $access_token,
-                'Connection'    => 'Keep-Alive',
+                'Content-Type' => 'application/json',
+                'X-Restli-Protocol-Version' => '2.0.0'
+            ),
+            'body' => wp_json_encode($body),
+            'timeout' => 15,
+        );
+
+        $response = wp_remote_post($endpoint, $args);
+
+        if (is_wp_error($response)) {
+            error_log('[HashPoster] LinkedIn Organization API WP_Error: ' . $response->get_error_message());
+            return $response;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+
+        if ($code !== 201) {
+            error_log('[HashPoster] LinkedIn Organization API error: ' . $response_body);
+            return new WP_Error('api_error', 'LinkedIn Organization API error: ' . $response_body . ' (HTTP ' . $code . ')');
+        }
+
+        error_log('[HashPoster] LinkedIn organization post successful');
+        return true;
+    }
+
+    /**
+     * Fallback method: Try to refresh LinkedIn access token
+     */
+    private function refresh_linkedin_token($creds) {
+        // Note: LinkedIn doesn't have a standard refresh token flow like OAuth2
+        // This is a placeholder for future implementation if needed
+        // For now, we'll just return an error indicating token refresh isn't available
+        error_log('[HashPoster] LinkedIn token refresh not implemented - LinkedIn uses long-lived tokens');
+        return new WP_Error('refresh_not_supported', 'LinkedIn token refresh not supported with current credentials');
+    }
+
+    /**
+     * Publish to Bluesky
+     */
+    private function publish_to_bluesky( $content, $media ) {
+        error_log('[HashPoster] Starting Bluesky publish attempt');
+        
+        // Check for OAuth tokens first (from connection test)
+        $oauth_tokens = get_option( 'hashposter_oauth_tokens', array() );
+        if ( ! empty( $oauth_tokens['bluesky'] ) && ! empty( $oauth_tokens['bluesky']['handle'] ) ) {
+            $creds = array(
+                'handle' => $oauth_tokens['bluesky']['handle'],
+                'app_password' => $oauth_tokens['bluesky']['app_password'] ?? $this->credentials['bluesky']['app_password'] ?? $this->credentials['bluesky']['password'] ?? ''
+            );
+        } else {
+            // Fallback to manual credentials
+            $creds = $this->credentials['bluesky'];
+        }
+
+        // Check for app_password or fallback to password field
+        $password = $creds['app_password'] ?? $creds['password'] ?? '';
+        
+        if (empty($creds['handle']) || empty($password)) {
+            error_log('[HashPoster] Bluesky missing credentials - handle: ' . (empty($creds['handle']) ? 'MISSING' : 'present') . ', password: ' . (empty($password) ? 'MISSING' : 'present'));
+            return $this->handle_error(new WP_Error('missing_credentials', 'Missing Bluesky credentials (handle and app password required). Configure credentials in API Credentials tab.'), 'bluesky');
+        }
+
+        try {
+            // Step 1: Authenticate and get session
+            $session = $this->bluesky_authenticate($creds['handle'], $password);
+            if (is_wp_error($session)) {
+                return $this->handle_error($session, 'bluesky');
+            }
+
+            // Debug: Log content being sent to Bluesky
+            error_log('[HashPoster] Bluesky content to post: ' . substr($content, 0, 200) . '...');
+            error_log('[HashPoster] Bluesky content length: ' . strlen($content));
+            $has_url = strpos($content, 'http://') !== false ||
+                       strpos($content, 'https://') !== false ||
+                       strpos($content, 'hashlytics.io') !== false;
+            error_log('[HashPoster] Bluesky content contains URL: ' . ($has_url ? 'YES' : 'NO'));
+
+            // Bluesky has a 300 grapheme limit - truncate if necessary
+            $max_graphemes = 300;
+            if (grapheme_strlen($content) > $max_graphemes) {
+                $content = grapheme_substr($content, 0, $max_graphemes - 3) . '...';
+                error_log('[HashPoster] Bluesky content truncated to ' . grapheme_strlen($content) . ' graphemes');
+            }
+
+            // Step 2: Create the post with embed
+            $post_result = $this->bluesky_create_post($session, $content, $media);
+            if (is_wp_error($post_result)) {
+                return $this->handle_error($post_result, 'bluesky');
+            }
+
+            error_log('[HashPoster] Bluesky post successful');
+            return true;
+
+        } catch (Exception $e) {
+            $error = new WP_Error('api_exception', '[HashPoster] Bluesky Exception: ' . $e->getMessage());
+            return $this->handle_error($error, 'bluesky');
+        }
+    }
+
+    /**
+     * Bluesky authentication helper
+     */
+    private function bluesky_authenticate($handle, $app_password) {
+        $endpoint = 'https://bsky.social/xrpc/com.atproto.server.createSession';
+
+        $body = wp_json_encode(array(
+            'identifier' => $handle,
+            'password' => $app_password
+        ));
+
+        $args = array(
+            'body' => $body,
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'User-Agent' => 'HashPoster/1.0'
             ),
             'timeout' => 15,
         );
-        $response = wp_remote_get($endpoint, $args);
-        if (is_wp_error($response)) return $response;
+
+        $response = wp_remote_post($endpoint, $args);
+
+        if (is_wp_error($response)) {
+            return new WP_Error('auth_error', '[HashPoster] Bluesky authentication failed: ' . $response->get_error_message());
+        }
+
         $code = wp_remote_retrieve_response_code($response);
         if ($code !== 200) {
-            return new WP_Error('api_error', 'LinkedIn API error: ' . wp_remote_retrieve_body($response));
+            $response_body = wp_remote_retrieve_body($response);
+            return new WP_Error('auth_error', '[HashPoster] Bluesky authentication failed: HTTP ' . $code . ' - ' . $response_body);
         }
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        if (!empty($body['id'])) {
-            return 'urn:li:person:' . $body['id'];
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error('auth_error', '[HashPoster] Bluesky: Invalid authentication response');
         }
-        return new WP_Error('api_error', 'Could not retrieve LinkedIn Person URN.');
+
+        // Normalize response keys: different ATProto servers may return camelCase
+        $access_jwt = $data['accessJwt'] ?? $data['access_jwt'] ?? null;
+        $did = $data['did'] ?? null;
+        $handle_resp = $data['handle'] ?? $data['handle'] ?? $handle;
+
+        if (empty($access_jwt) || empty($did)) {
+            return new WP_Error('auth_error', '[HashPoster] Bluesky: Authentication failed - missing access token or DID. Response: ' . wp_json_encode($data));
+        }
+
+        return array(
+            'access_jwt' => $access_jwt,
+            'did' => $did,
+            'handle' => $handle_resp
+        );
     }
 
-    // --- Shortlink logic ---
-    public function generate_shortlink( $url, $service = 'wordpress' ) {
-        switch ( $service ) {
-            case 'bitly':
-                return $this->shorten_with_bitly( $url );
-            case 'wordpress':
-            default:
-                return wp_get_shortlink( url_to_postid( $url ) );
+    /**
+     * Parse content for Bluesky RichText facets (hashtags and URLs)
+     */
+    private function bluesky_parse_facets($text) {
+        $facets = array();
+
+        // Parse hashtags
+        preg_match_all('/#([a-zA-Z0-9_]+)/', $text, $hashtag_matches, PREG_OFFSET_CAPTURE);
+        foreach ($hashtag_matches[0] as $match) {
+            $facets[] = array(
+                'index' => array(
+                    'byteStart' => $match[1],
+                    'byteEnd' => $match[1] + strlen($match[0])
+                ),
+                'features' => array(
+                    array(
+                        '$type' => 'app.bsky.richtext.facet#tag',
+                        'tag' => substr($match[0], 1) // Remove the # prefix
+                    )
+                )
+            );
         }
+
+        // Parse URLs
+        preg_match_all('/https?:\/\/[^\s]+/', $text, $url_matches, PREG_OFFSET_CAPTURE);
+        foreach ($url_matches[0] as $match) {
+            $facets[] = array(
+                'index' => array(
+                    'byteStart' => $match[1],
+                    'byteEnd' => $match[1] + strlen($match[0])
+                ),
+                'features' => array(
+                    array(
+                        '$type' => 'app.bsky.richtext.facet#link',
+                        'uri' => $match[0]
+                    )
+                )
+            );
+        }
+
+        return $facets;
     }
 
-    private function shorten_with_bitly( $url ) {
-        $token = isset( $this->credentials['bitly']['token'] ) ? $this->credentials['bitly']['token'] : '';
-        if ( !$token ) return $url;
+    /**
+     * Bluesky create post helper
+     */
+    private function bluesky_create_post($session, $content, $media = array()) {
+        $endpoint = 'https://bsky.social/xrpc/com.atproto.repo.createRecord';
+
+        // Parse facets for hashtags and URLs in text
+        $facets = $this->bluesky_parse_facets($content);
+
+        // Prepare the post record
+        $record = array(
+            'text' => $content,
+            'createdAt' => gmdate('c') // ISO 8601 format
+        );
+
+        // Add facets if any were found
+        if (!empty($facets)) {
+            $record['facets'] = $facets;
+        }
+        
+        // Add embed with external URL card if media provided
+        if (!empty($media['url'])) {
+            // Decode HTML entities in title and description for proper display
+            $title = !empty($media['title']) ? $media['title'] : 'Link';
+            $title = html_entity_decode($title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            
+            $description = !empty($media['description']) ? $media['description'] : '';
+            $description = html_entity_decode($description, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            
+            $embed = array(
+                '$type' => 'app.bsky.embed.external',
+                'external' => array(
+                    'uri' => $media['url'],
+                    'title' => $title,
+                    'description' => $description
+                )
+            );
+            // Note: Bluesky fetches OG:image from URL on their side when users view the post
+            // No thumb upload needed - it will be scraped from your site's OG tags
+            $record['embed'] = $embed;
+        }
+
+        // Use JSON flags to avoid escaping unicode and slashes so hashtags remain intact
+        $body = wp_json_encode(array(
+            'repo' => $session['did'],
+            'collection' => 'app.bsky.feed.post',
+            'record' => $record
+        ), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $args = array(
+            'body' => $body,
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $session['access_jwt'],
+                'User-Agent' => 'HashPoster/1.0'
+            ),
+            'timeout' => 15,
+        );
+
+        $response = wp_remote_post($endpoint, $args);
+
+        if (is_wp_error($response)) {
+            return new WP_Error('post_error', '[HashPoster] Bluesky post failed: ' . $response->get_error_message());
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code !== 200) {
+            $response_body = wp_remote_retrieve_body($response);
+            return new WP_Error('post_error', '[HashPoster] Bluesky post failed: HTTP ' . $code . ' - ' . $response_body);
+        }
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error('post_error', '[HashPoster] Bluesky: Invalid post response');
+        }
+
+        return $data;
+    }
+
+    /**
+     * Upload image blob to Bluesky for embed thumbnails
+     */
+    private function bluesky_upload_blob($session, $image_url) {
+        // Download the image
+        $image_data = wp_remote_get($image_url, array('timeout' => 15));
+        
+        if (is_wp_error($image_data)) {
+            error_log('[HashPoster] Bluesky blob upload - Failed to download image: ' . $image_data->get_error_message());
+            return $image_data;
+        }
+        
+        $image_body = wp_remote_retrieve_body($image_data);
+        $content_type = wp_remote_retrieve_header($image_data, 'content-type');
+        
+        if (empty($image_body)) {
+            return new WP_Error('blob_error', '[HashPoster] Bluesky: Empty image data');
+        }
+        
+        // Upload to Bluesky as blob
+        $endpoint = 'https://bsky.social/xrpc/com.atproto.repo.uploadBlob';
+        
+        $args = array(
+            'body' => $image_body,
+            'headers' => array(
+                'Content-Type' => $content_type ?: 'image/jpeg',
+                'Authorization' => 'Bearer ' . $session['access_jwt'],
+                'User-Agent' => 'HashPoster/1.0'
+            ),
+            'timeout' => 30,
+        );
+        
+        $response = wp_remote_post($endpoint, $args);
+        
+        if (is_wp_error($response)) {
+            error_log('[HashPoster] Bluesky blob upload failed: ' . $response->get_error_message());
+            return $response;
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code !== 200) {
+            $response_body = wp_remote_retrieve_body($response);
+            error_log('[HashPoster] Bluesky blob upload failed: HTTP ' . $code . ' - ' . $response_body);
+            return new WP_Error('blob_error', '[HashPoster] Bluesky blob upload failed: HTTP ' . $code);
+        }
+        
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error('blob_error', '[HashPoster] Bluesky: Invalid blob upload response');
+        }
+        
+        error_log('[HashPoster] Bluesky blob uploaded successfully');
+        return $data;
+    }
+
+    /**
+     * (Reddit support removed)
+     */
+
+    // Pinterest support removed plugin-wide.
+
+    /**
+     * Shorten a URL using Bitly
+     * Returns shortened URL string or WP_Error
+     */
+    private function shorten_url_bitly($long_url) {
+        $creds = $this->credentials['bitly'] ?? array();
+        $token = $creds['api_key'] ?? $creds['token'] ?? '';
+        if (empty($token)) {
+            return new WP_Error('missing_credentials', 'Bitly token missing');
+        }
+
         $endpoint = 'https://api-ssl.bitly.com/v4/shorten';
-        $body = array('long_url' => $url);
+        $body = array('long_url' => $long_url);
         $args = array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $token,
-                'Content-Type'  => 'application/json',
+                'Content-Type' => 'application/json'
             ),
-            'body'    => wp_json_encode($body),
+            'body' => wp_json_encode($body),
             'timeout' => 10,
         );
-        $response = wp_remote_post($endpoint, $args);
-        if (is_wp_error($response)) return $url;
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        return !empty($data['link']) ? $data['link'] : $url;
+
+        $resp = wp_remote_post($endpoint, $args);
+        if (is_wp_error($resp)) return $resp;
+        $code = wp_remote_retrieve_response_code($resp);
+        $body = wp_remote_retrieve_body($resp);
+        $data = json_decode($body, true);
+        if ($code !== 200 && $code !== 201) {
+            return new WP_Error('bitly_error', 'Bitly API error: ' . $body);
+        }
+
+        return $data['link'] ?? ($data['id'] ?? '');
     }
 
-    public function get_short_url($url, $post_id = 0) {
-        // Clear any previous results
-        static $cache = [];
-        $cache_key = md5($url . $post_id);
-        
-        if (isset($cache[$cache_key])) {
-            return $cache[$cache_key];
+    /**
+     * Remote post to another WordPress site using Application Passwords (REST API)
+     */
+    private function remote_post_to_wordpress($site_url, $username, $app_password, $post_data) {
+        if (empty($site_url) || empty($username) || empty($app_password)) {
+            return new WP_Error('missing_credentials', 'Missing WordPress remote posting credentials');
         }
-        
-        $shortlinks = get_option('hashposter_shortlinks', array());
-        $use_bitly = !empty($shortlinks['bitly']['active']) && !empty($shortlinks['bitly']['token']);
-        $bitly_token = $shortlinks['bitly']['token'] ?? '';
 
-        if ($use_bitly && $bitly_token) {
-            $endpoint = 'https://api-ssl.bitly.com/v4/shorten';
-            $args = [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $bitly_token,
-                    'Content-Type'  => 'application/json',
-                ],
-                'body' => json_encode(['long_url' => $url]),
-                'timeout' => 10,
-            ];
-            
-            $response = wp_remote_post($endpoint, $args);
-            
-            if (!is_wp_error($response)) {
-                $code = wp_remote_retrieve_response_code($response);
-                $body = json_decode(wp_remote_retrieve_body($response), true);
-                
-                if ($code === 200 && !empty($body['link'])) {
-                    if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log('[HashPoster] Bitly short URL successfully generated: ' . $body['link'] . ' for ' . $url);
-                    }
-                    $cache[$cache_key] = $body['link'];
-                    return $body['link'];
+        $endpoint = rtrim($site_url, '/') . '/wp-json/wp/v2/posts';
+        $auth = base64_encode($username . ':' . $app_password);
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Basic ' . $auth,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => wp_json_encode($post_data),
+            'timeout' => 15,
+        );
+
+        $resp = wp_remote_post($endpoint, $args);
+        if (is_wp_error($resp)) return $resp;
+        $code = wp_remote_retrieve_response_code($resp);
+        $body = wp_remote_retrieve_body($resp);
+        if ($code !== 201 && $code !== 200) {
+            return new WP_Error('remote_post_error', 'Remote WordPress post failed: ' . $body);
+        }
+
+        return json_decode($body, true);
+    }
+
+    /**
+     * Handle and process an error
+     *
+     * @param WP_Error|string $error The error to handle
+     * @param string $platform The platform where the error occurred
+     * @param array $context Additional context information
+     * @return array Recovery actions and recommendations
+     */
+    private function handle_error($error, $platform, $context = array()) {
+        $error_info = $this->parse_error($error);
+        $error_type = $this->classify_error($error_info, $platform);
+
+        // Log the error
+        $this->log_error($error_info, $error_type, $platform, $context);
+
+        // Determine recovery strategy
+        $recovery_actions = $this->get_recovery_actions($error_type, $platform, $context);
+
+        // Execute automatic recovery if possible
+        $auto_recovery_result = $this->attempt_auto_recovery($error_type, $platform, $context);
+
+        return array(
+            'error_type' => $error_type,
+            'error_info' => $error_info,
+            'recovery_actions' => $recovery_actions,
+            'auto_recovery_attempted' => !empty($auto_recovery_result),
+            'auto_recovery_result' => $auto_recovery_result,
+            'user_message' => $this->get_user_friendly_message($error_type, $platform)
+        );
+    }
+
+    /**
+     * Parse error information from various formats
+     */
+    private function parse_error($error) {
+        if (is_wp_error($error)) {
+            return array(
+                'type' => 'wp_error',
+                'code' => $error->get_error_code(),
+                'message' => $error->get_error_message(),
+                'data' => $error->get_error_data()
+            );
+        }
+
+        if (is_string($error)) {
+            return array(
+                'type' => 'string',
+                'message' => $error
+            );
+        }
+
+        if (is_array($error)) {
+            return array(
+                'type' => 'array',
+                'data' => $error
+            );
+        }
+
+        return array(
+            'type' => 'unknown',
+            'data' => $error
+        );
+    }
+
+    /**
+     * Classify error type based on error information and platform
+     */
+    private function classify_error($error_info, $platform) {
+        $message = strtolower($error_info['message'] ?? '');
+        $code = strtolower($error_info['code'] ?? '');
+
+        // Authentication errors
+        if (strpos($message, 'unauthorized') !== false ||
+            strpos($message, 'forbidden') !== false ||
+            strpos($message, 'invalid_token') !== false ||
+            strpos($code, 'auth') !== false ||
+            strpos($message, '403') !== false) {
+            return 'authentication';
+        }
+
+        // Rate limit errors
+        if (strpos($message, 'rate limit') !== false ||
+            strpos($message, 'too many requests') !== false ||
+            strpos($message, '429') !== false) {
+            return 'rate_limit';
+        }
+
+        // Network errors
+        if (strpos($message, 'connection') !== false ||
+            strpos($message, 'timeout') !== false ||
+            strpos($message, 'network') !== false ||
+            strpos($code, 'http') !== false) {
+            return 'network';
+        }
+
+        // Content errors
+        if (strpos($message, 'content') !== false ||
+            strpos($message, 'length') !== false ||
+            strpos($message, 'character') !== false ||
+            strpos($message, 'validation') !== false) {
+            return 'content';
+        }
+
+        // Default to API error
+        return 'api';
+    }
+
+    /**
+     * Get recovery actions for an error type
+     */
+    private function get_recovery_actions($error_type, $platform, $context) {
+        $actions = array();
+
+        if (isset($this->error_types[$error_type])) {
+            $actions = $this->error_types[$error_type]['recovery'];
+        }
+
+        // Add platform-specific recovery actions
+        $platform_actions = $this->get_platform_specific_actions($error_type, $platform);
+        $actions = array_merge($actions, $platform_actions);
+
+        return $actions;
+    }
+
+    /**
+     * Get platform-specific recovery actions
+     */
+    private function get_platform_specific_actions($error_type, $platform) {
+        $actions = array();
+
+        switch ($platform) {
+            case 'x':
+                if ($error_type === 'authentication') {
+                    $actions[] = 'check_twitter_app_permissions';
+                    $actions[] = 'regenerate_twitter_tokens';
                 }
-                
-                // Bitly API error, log for debug
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] Bitly API error but response OK, using Bitly URL anyway: ' . print_r($body, true));
-                    if (!empty($body['link'])) {
-                        $cache[$cache_key] = $body['link'];
-                        return $body['link'];
-                    }
+                break;
+
+            case 'linkedin':
+                if ($error_type === 'authentication') {
+                    $actions[] = 'verify_linkedin_scopes';
+                    $actions[] = 'reconnect_linkedin_account';
                 }
-            } else {
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] Bitly WP_Error: ' . $response->get_error_message());
+                break;
+
+            case 'facebook':
+                if ($error_type === 'authentication') {
+                    $actions[] = 'extend_facebook_token';
+                    $actions[] = 'verify_facebook_pages_access';
                 }
+                break;
+
+            case 'bluesky':
+                if ($error_type === 'authentication') {
+                    $actions[] = 'regenerate_bluesky_app_password';
+                }
+                break;
+        }
+
+        return $actions;
+    }
+
+    /**
+     * Attempt automatic recovery
+     */
+    private function attempt_auto_recovery($error_type, $platform, $context) {
+        switch ($error_type) {
+            case 'rate_limit':
+                return $this->handle_rate_limit_recovery($platform, $context);
+
+            case 'network':
+                return $this->handle_network_recovery($platform, $context);
+
+            case 'content':
+                return $this->handle_content_recovery($platform, $context);
+
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Handle rate limit recovery
+     */
+    private function handle_rate_limit_recovery($platform, $context) {
+        $wait_time = $this->get_rate_limit_wait_time($platform);
+
+        if ($wait_time > 0) {
+            // Schedule retry
+            $retry_time = time() + $wait_time;
+
+            if (isset($context['post_id'])) {
+                wp_schedule_single_event($retry_time, 'hashposter_retry_post', array(
+                    $context['post_id'],
+                    $platform,
+                    $context
+                ));
+            }
+
+            return array(
+                'action' => 'scheduled_retry',
+                'retry_time' => $retry_time,
+                'wait_seconds' => $wait_time
+            );
+        }
+
+        return false;
+    }
+
+    /**
+     * Handle network recovery
+     */
+    private function handle_network_recovery($platform, $context) {
+        // Simple retry with exponential backoff
+        $retry_count = $context['retry_count'] ?? 0;
+        $max_retries = 3;
+
+        if ($retry_count < $max_retries) {
+            $backoff_time = pow(2, $retry_count) * 30; // 30s, 1min, 2min
+
+            if (isset($context['post_id'])) {
+                wp_schedule_single_event(time() + $backoff_time, 'hashposter_retry_post', array(
+                    $context['post_id'],
+                    $platform,
+                    array_merge($context, array('retry_count' => $retry_count + 1))
+                ));
+            }
+
+            return array(
+                'action' => 'network_retry',
+                'retry_count' => $retry_count + 1,
+                'backoff_seconds' => $backoff_time
+            );
+        }
+
+        return false;
+    }
+
+    /**
+     * Handle content recovery
+     */
+    private function handle_content_recovery($platform, $context) {
+        if (isset($context['content'])) {
+            $fixed_content = $this->fix_content_for_platform($context['content'], $platform);
+
+            if ($fixed_content !== $context['content']) {
+                return array(
+                    'action' => 'content_fixed',
+                    'original_content' => $context['content'],
+                    'fixed_content' => $fixed_content
+                );
             }
         }
-        
-        // fallback to WordPress shortlink or original URL
-        $shortlink = $post_id ? wp_get_shortlink($post_id) : false;
-        $result = $shortlink ?: $url;
-        $cache[$cache_key] = $result;
-        return $result;
+
+        return false;
     }
 
-    public function test_connection( $platform_or_service ) {
-        // For demo: check credentials exist, in real use, make an API call
-        if ( in_array( $platform_or_service, $this->platforms ) ) {
-            return $this->validate_credentials( $platform_or_service ) ? true : 'Missing or invalid credentials.';
+    /**
+     * Fix content for platform-specific requirements
+     */
+    private function fix_content_for_platform($content, $platform) {
+        switch ($platform) {
+            case 'x':
+                // Truncate to 280 characters
+                if (strlen($content) > 280) {
+                    $content = substr($content, 0, 277) . '...';
+                }
+                break;
+
+            case 'bluesky':
+                // Truncate to 300 characters
+                if (strlen($content) > 300) {
+                    $content = substr($content, 0, 297) . '...';
+                }
+                break;
+
+            case 'linkedin':
+                // Remove any HTML entities that might cause issues
+                $content = html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                break;
         }
-        if ( $platform_or_service === 'bitly' ) {
-            // Always reload credentials to get latest saved value
-            $this->credentials = get_option( 'hashposter_shortlinks', array() );
-            $token = $this->credentials['bitly']['token'] ?? '';
-            if (!$token) return 'Missing Bitly token.';
-            // Try a simple Bitly API call
-            $endpoint = 'https://api-ssl.bitly.com/v4/user';
-            $args = array(
-                'headers' => array(
-                    'Authorization' => 'Bearer ' . $token,
-                ),
-                'timeout' => 10,
-            );
-            $response = wp_remote_get($endpoint, $args);
-            if (is_wp_error($response)) return $response->get_error_message();
-            $code = wp_remote_retrieve_response_code($response);
-            return ($code === 200) ? true : 'Bitly API error: ' . wp_remote_retrieve_body($response);
+
+        return $content;
+    }
+
+    /**
+     * Get rate limit wait time for platform
+     */
+    private function get_rate_limit_wait_time($platform) {
+        $wait_times = array(
+            'x' => 900,        // 15 minutes
+            'facebook' => 3600, // 1 hour
+            'linkedin' => 1800, // 30 minutes
+            'bluesky' => 300,   // 5 minutes
+        );
+
+        return $wait_times[$platform] ?? 900;
+    }
+
+    /**
+     * Log error with comprehensive information
+     */
+    private function log_error($error_info, $error_type, $platform, $context) {
+        $log_entry = array(
+            'timestamp' => current_time('mysql'),
+            'error_type' => $error_type,
+            'platform' => $platform,
+            'error_info' => $error_info,
+            'context' => $context,
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+        );
+
+        error_log('[HashPoster Error] ' . json_encode($log_entry));
+
+        // Also store in custom error log if enabled
+        $settings = get_option('hashposter_settings', array());
+        if (!empty($settings['enable_error_logging'])) {
+            $this->store_error_log($log_entry);
         }
-        if ( $platform_or_service === 'wordpress' ) {
-            return true;
+    }
+
+    /**
+     * Store error in custom log
+     */
+    private function store_error_log($log_entry) {
+        $error_logs = get_option('hashposter_error_logs', array());
+        $error_logs[] = $log_entry;
+
+        // Keep only last 100 errors
+        if (count($error_logs) > 100) {
+            $error_logs = array_slice($error_logs, -100);
         }
-        return 'Unknown platform/service.';
+
+        update_option('hashposter_error_logs', $error_logs);
+    }
+
+    /**
+     * Get user-friendly error message
+     */
+    private function get_user_friendly_message($error_type, $platform) {
+        $messages = array(
+            'authentication' => "Authentication failed for {$platform}. Please check your API credentials and permissions.",
+            'rate_limit' => "Rate limit exceeded for {$platform}. The post will be retried automatically.",
+            'network' => "Network error occurred while posting to {$platform}. The system will retry automatically.",
+            'content' => "Content issue detected for {$platform}. The content has been adjusted and will be retried.",
+            'api' => "An error occurred while posting to {$platform}. Please check the error logs for details."
+        );
+
+        return $messages[$error_type] ?? "An error occurred with {$platform}. Please check your settings.";
+    }
+
+    /**
+     * Get error statistics
+     */
+    public function get_error_stats($days = 7) {
+        $error_logs = get_option('hashposter_error_logs', array());
+        $stats = array(
+            'total_errors' => 0,
+            'by_type' => array(),
+            'by_platform' => array(),
+            'recent_errors' => array()
+        );
+
+        $cutoff_time = strtotime("-{$days} days");
+
+        foreach ($error_logs as $log) {
+            if (strtotime($log['timestamp']) < $cutoff_time) {
+                continue;
+            }
+
+            $stats['total_errors']++;
+
+            // Count by type
+            $type = $log['error_type'] ?? 'unknown';
+            $stats['by_type'][$type] = ($stats['by_type'][$type] ?? 0) + 1;
+
+            // Count by platform
+            $platform = $log['platform'] ?? 'unknown';
+            $stats['by_platform'][$platform] = ($stats['by_platform'][$platform] ?? 0) + 1;
+
+            // Keep recent errors
+            if (count($stats['recent_errors']) < 10) {
+                $stats['recent_errors'][] = $log;
+            }
+        }
+
+        return $stats;
     }
 }

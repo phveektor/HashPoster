@@ -161,6 +161,7 @@
     position: relative;
     width: 40px;
     height: 20px;
+    appearance: none;
     -webkit-appearance: none;
     background: #e5e5e5;
     outline: none;
@@ -212,21 +213,6 @@
     cursor: help;
     vertical-align: middle;
     margin-left: 5px;
-}
-
-/* Buttons */
-.hashposter-test-connection {
-    background: #0073aa !important;
-    color: white !important;
-    border: none !important;
-    padding: 8px 12px !important;
-    border-radius: 4px !important;
-    cursor: pointer !important;
-    transition: background 0.2s ease !important;
-}
-
-.hashposter-test-connection:hover {
-    background: #006291 !important;
 }
 
 /* Responsive */
