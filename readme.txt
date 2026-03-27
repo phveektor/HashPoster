@@ -35,7 +35,7 @@ HashPoster is a lightweight, powerful WordPress plugin that automatically shares
 
 Once installed, future updates will be handled automatically via the "Updates" dashboard!
 
-== Frequently Asked Questions ==
+== FAQ ==
 
 = Posts are not showing up on social platforms? =
 Check your API credentials for each platform under the HashPoster settings. Ensure your tokens haven't expired and verify that your app has Write permissions for each platform.
