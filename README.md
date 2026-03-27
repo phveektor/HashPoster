@@ -140,6 +140,11 @@ Enable debugging in the plugin settings to log activities to the WordPress debug
 
 ## 📚 Changelog
 
+### 2.0
+- Added automatic GitHub updater
+- Redesigned the settings page and analytics page
+- Bluesky now displays rich links
+
 ### 1.0 - Initial Release
 - Multiple platform support
 - Customizable post templates
