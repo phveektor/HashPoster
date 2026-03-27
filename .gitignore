@@ -1,0 +1,19 @@
+# WordPress
+wp-config.php
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# Temp/test files
+test_*.php
