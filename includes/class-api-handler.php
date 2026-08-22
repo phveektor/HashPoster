@@ -118,7 +118,7 @@ class HashPoster_API_Handler {
                 $consumer_secret = $credentials['x']['client_secret'] ?? '';
                 
                 if ( !empty($consumer_key) && !empty($consumer_secret) ) {
-                    require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php';
+                    if ( file_exists( HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php' ) ) { require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php'; } else { return new WP_Error('library_removed', 'TwitterOAuth library removed.'); }
                     try {
                         $connection = new Abraham\TwitterOAuth\TwitterOAuth(
                             $consumer_key, 
@@ -287,7 +287,7 @@ class HashPoster_API_Handler {
         }
 
         // Include TwitterOAuth library
-        require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php';
+        if ( file_exists( HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php' ) ) { require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php'; } else { return new WP_Error('library_removed', 'TwitterOAuth library removed.'); }
         error_log('[HashPoster] X: TwitterOAuth class exists: ' . (class_exists('Abraham\TwitterOAuth\TwitterOAuth') ? 'YES' : 'NO'));
 
         try {
@@ -560,12 +560,10 @@ class HashPoster_API_Handler {
         error_log('[HashPoster DEBUG] Facebook credentials - access_token present: ' . (!empty($creds['access_token']) ? 'YES' : 'NO'));
         error_log('[HashPoster DEBUG] Facebook credentials - page_id present: ' . (!empty($creds['page_id']) ? 'YES' : 'NO'));
 
-        if (empty($creds['access_token']) || empty($creds['page_id'])) {
-            return $this->handle_error(new WP_Error('missing_credentials', 'Missing Facebook credentials (access token and page ID required). Please connect via OAuth or fill in manual credentials.'), 'facebook');
-        }
-
-        // Verify the OAuth token
-        $verify_endpoint = 'https://graph.facebook.com/v24.0/me?fields=id,name&access_token=' . $creds['access_token'];
+        // Verify the Page Access Token by querying the page itself (not /me, which is for user tokens).
+        // Using the page ID endpoint correctly validates a Page Access Token.
+        $page_id = $creds['page_id'];
+        $verify_endpoint = 'https://graph.facebook.com/v24.0/' . $page_id . '?fields=id,name&access_token=' . $creds['access_token'];
         $verify_response = wp_remote_get($verify_endpoint, array('timeout' => 15));
 
         if (is_wp_error($verify_response)) {
@@ -577,22 +575,25 @@ class HashPoster_API_Handler {
             $verify_body = wp_remote_retrieve_body($verify_response);
             $error_data = json_decode($verify_body, true);
             $error_message = $error_data['error']['message'] ?? '';
+            $fb_error_code = $error_data['error']['code'] ?? 0;
 
-            if ($error_message !== '' && (
+            error_log('[HashPoster DEBUG] Facebook page token verification failed. HTTP ' . $verify_code . ' | FB code: ' . $fb_error_code . ' | ' . $error_message);
+
+            if ($fb_error_code === 190 || ($error_message !== '' && (
                 strpos($error_message, 'session is invalid') !== false ||
                 strpos($error_message, 'Invalid OAuth access token') !== false ||
                 strpos($error_message, 'Error validating access token') !== false
-            )) {
+            ))) {
                 return $this->handle_error(new WP_Error('token_expired',
-                    'Facebook OAuth access token has expired. Please reconnect via OAuth in the settings.'), 'facebook');
+                    'Facebook Page Access Token has expired or been invalidated. Please reconnect via OAuth in the settings.'), 'facebook');
             }
 
-            if (strpos($error_message, 'permissions') !== false) {
+            if (strpos($error_message, 'permissions') !== false || $fb_error_code === 200 || $fb_error_code === 10) {
                 return $this->handle_error(new WP_Error('insufficient_permissions',
                     'Facebook app lacks required permissions. Please ensure your Facebook app has the following permissions: pages_manage_posts, pages_show_list, publish_pages.'), 'facebook');
             }
 
-            return $this->handle_error(new WP_Error('token_invalid', 'Facebook access token is invalid: ' . $error_message), 'facebook');
+            return $this->handle_error(new WP_Error('token_invalid', 'Facebook page token is invalid (HTTP ' . $verify_code . '): ' . $error_message), 'facebook');
         }
 
         $endpoint = 'https://graph.facebook.com/v24.0/' . $creds['page_id'] . '/feed';
@@ -638,11 +639,13 @@ class HashPoster_API_Handler {
                 strpos($error_message, 'Invalid OAuth access token') !== false
             ));
 
-            if ( $is_expired && $attempt === 0 && $this->facebook_can_refresh_page_token( $manual_creds ) ) {
-                $refreshed = $this->facebook_refresh_page_access_token( $manual_creds );
+            // Attempt to auto-refresh the page token on first failure using stored OAuth credentials.
+            $api_creds = $this->credentials['facebook'] ?? array();
+            if ( $is_expired && $attempt === 0 && $this->facebook_can_refresh_page_token( array_merge( $api_creds, $creds ) ) ) {
+                $merged_creds = array_merge( $api_creds, $creds );
+                $refreshed = $this->facebook_refresh_page_access_token( $merged_creds );
                 if ( ! is_wp_error( $refreshed ) ) {
                     $this->facebook_persist_refreshed_credentials( $refreshed );
-                    $manual_creds = $refreshed;
                     $creds = $refreshed;
                     continue;
                 }
@@ -1407,7 +1410,7 @@ class HashPoster_API_Handler {
             'recovery_actions' => $recovery_actions,
             'auto_recovery_attempted' => !empty($auto_recovery_result),
             'auto_recovery_result' => $auto_recovery_result,
-            'user_message' => $this->get_user_friendly_message($error_type, $platform)
+            'user_message' => $this->get_user_friendly_message($error_type, $platform, $error_info)
         );
     }
 
@@ -1720,16 +1723,18 @@ class HashPoster_API_Handler {
     /**
      * Get user-friendly error message
      */
-    private function get_user_friendly_message($error_type, $platform) {
+    private function get_user_friendly_message($error_type, $platform, $error_info = array()) {
+        $api_details = !empty($error_info['message']) ? ' Details: ' . $error_info['message'] : ' Please check the error logs for details.';
+        
         $messages = array(
-            'authentication' => "Authentication failed for {$platform}. Please check your API credentials and permissions.",
+            'authentication' => "Authentication failed for {$platform}. Please check your API credentials and permissions." . $api_details,
             'rate_limit' => "Rate limit exceeded for {$platform}. The post will be retried automatically.",
             'network' => "Network error occurred while posting to {$platform}. The system will retry automatically.",
-            'content' => "Content issue detected for {$platform}. The content has been adjusted and will be retried.",
-            'api' => "An error occurred while posting to {$platform}. Please check the error logs for details."
+            'content' => "Content issue detected for {$platform}. The content has been adjusted and will be retried." . $api_details,
+            'api' => "An error occurred while posting to {$platform}." . $api_details
         );
 
-        return $messages[$error_type] ?? "An error occurred with {$platform}. Please check your settings.";
+        return $messages[$error_type] ?? "An error occurred with {$platform}. Please check your settings." . $api_details;
     }
 
     /**

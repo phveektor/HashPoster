@@ -196,7 +196,7 @@ class HashPoster_OAuth_Handler {
         }
 
         // Include TwitterOAuth library
-        require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php';
+        if ( file_exists( HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php' ) ) { require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php'; } else { return false; }
 
         try {
             $connection = new Abraham\TwitterOAuth\TwitterOAuth($consumer_key, $consumer_secret);
@@ -376,20 +376,26 @@ class HashPoster_OAuth_Handler {
     /**
      * Handle Facebook OAuth callback
      */
-    private function handle_facebook_callback() {
+            private function handle_facebook_callback() {
+        error_log('[HashPoster FB Debug] callback started');
+        
         if ( isset( $_GET['error'] ) ) {
             $error = sanitize_text_field( $_GET['error'] );
+            error_log('[HashPoster FB Debug] error in GET: ' . $error);
             $this->oauth_error_redirect( 'Facebook authentication failed: ' . $error );
             return;
         }
 
         if ( ! isset( $_GET['code'] ) || ! isset( $_GET['state'] ) ) {
+            error_log('[HashPoster FB Debug] missing code or state in GET');
             $this->oauth_error_redirect( 'Facebook authentication failed: Missing parameters' );
             return;
         }
 
         $state = get_option( 'hashposter_oauth_state_facebook' );
+        error_log('[HashPoster FB Debug] state expected: ' . $state . ' | state received: ' . $_GET['state']);
         if ( $_GET['state'] !== $state ) {
+            error_log('[HashPoster FB Debug] state mismatch');
             $this->oauth_error_redirect( 'Facebook authentication failed: Invalid state' );
             return;
         }
@@ -398,14 +404,19 @@ class HashPoster_OAuth_Handler {
         $credentials = get_option( 'hashposter_api_credentials', array() );
         $app_id = $credentials['facebook']['app_id'] ?? '';
         $app_secret = $credentials['facebook']['app_secret'] ?? '';
+        
+        error_log('[HashPoster FB Debug] App ID: ' . $app_id . ' | App Secret (last 4): ' . substr($app_secret, -4));
 
         if ( empty( $app_id ) || empty( $app_secret ) ) {
+            error_log('[HashPoster FB Debug] App ID or App Secret is empty in config');
             $this->oauth_error_redirect( 'Facebook credentials not configured' );
             return;
         }
 
         $token_url = 'https://graph.facebook.com/v24.0/oauth/access_token';
         $callback_url = admin_url( 'admin.php?page=hashposter-settings&hashposter_oauth_callback=facebook' );
+        
+        error_log('[HashPoster FB Debug] Callback URL used for exchange: ' . $callback_url);
 
         $response = wp_remote_post( $token_url, array(
             'body' => array(
@@ -417,27 +428,43 @@ class HashPoster_OAuth_Handler {
         ) );
 
         if ( is_wp_error( $response ) ) {
+            error_log('[HashPoster FB Debug] token exchange WP_Error: ' . $response->get_error_message());
             $this->oauth_error_redirect( 'Facebook token exchange failed: ' . $response->get_error_message() );
             return;
         }
 
-        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        $resp_code = wp_remote_retrieve_response_code( $response );
+        $resp_body = wp_remote_retrieve_body( $response );
+        error_log('[HashPoster FB Debug] token exchange HTTP Code: ' . $resp_code . ' | Body: ' . $resp_body);
+
+        $body = json_decode( $resp_body, true );
         if ( isset( $body['access_token'] ) ) {
+            error_log('[HashPoster FB Debug] successfully exchanged code for user access token');
+            $user_token = $body['access_token'];
+            
             // Get user's pages
-            $pages_url = 'https://graph.facebook.com/v24.0/me/accounts?access_token=' . $body['access_token'];
+            $pages_url = 'https://graph.facebook.com/v24.0/me/accounts?access_token=' . $user_token;
             $pages_response = wp_remote_get( $pages_url );
 
             $page_id = '';
             $page_access_token = '';
 
-            if ( ! is_wp_error( $pages_response ) ) {
-                $pages_data = json_decode( wp_remote_retrieve_body( $pages_response ), true );
+            if ( is_wp_error( $pages_response ) ) {
+                error_log('[HashPoster FB Debug] pages request WP_Error: ' . $pages_response->get_error_message());
+            } else {
+                $pages_code = wp_remote_retrieve_response_code( $pages_response );
+                $pages_body = wp_remote_retrieve_body( $pages_response );
+                error_log('[HashPoster FB Debug] pages request HTTP Code: ' . $pages_code . ' | Body: ' . $pages_body);
+                
+                $pages_data = json_decode( $pages_body, true );
                 if ( ! empty( $pages_data['data'] ) && is_array( $pages_data['data'] ) ) {
                     // Look specifically for Hashlytics page
                     foreach ( $pages_data['data'] as $page ) {
+                        error_log('[HashPoster FB Debug] found page: ' . $page['name'] . ' (ID: ' . $page['id'] . ')');
                         if ( stripos( $page['name'], 'hashlytics' ) !== false ) {
                             $page_id = $page['id'];
                             $page_access_token = $page['access_token'];
+                            error_log('[HashPoster FB Debug] matched page to Hashlytics');
                             break;
                         }
                     }
@@ -446,10 +473,64 @@ class HashPoster_OAuth_Handler {
                         $page = $pages_data['data'][0];
                         $page_id = $page['id'];
                         $page_access_token = $page['access_token'];
+                        error_log('[HashPoster FB Debug] fell back to first page: ' . $page['name']);
+                    }
+                } else {
+                    error_log('[HashPoster FB Debug] pages list data is empty or invalid structure');
+                }
+            }
+
+            // SMART FALLBACK: If page_id is still empty, inspect debug_token granular scopes
+            if ( empty( $page_id ) ) {
+                error_log('[HashPoster FB Debug] pages list was empty, attempting smart debug_token fallback');
+                $app_token = $app_id . '|' . $app_secret;
+                $debug_url = 'https://graph.facebook.com/debug_token?input_token=' . urlencode($user_token) . '&access_token=' . urlencode($app_token);
+                $debug_response = wp_remote_get( $debug_url );
+                
+                if ( is_wp_error( $debug_response ) ) {
+                    error_log('[HashPoster FB Debug] debug_token request WP_Error: ' . $debug_response->get_error_message());
+                } else {
+                    $debug_body = wp_remote_retrieve_body( $debug_response );
+                    error_log('[HashPoster FB Debug] debug_token Response: ' . $debug_body);
+                    $debug_data = json_decode( $debug_body, true );
+                    $granular_scopes = $debug_data['data']['granular_scopes'] ?? array();
+                    
+                    $found_page_ids = array();
+                    foreach ( $granular_scopes as $g_scope ) {
+                        if ( in_array($g_scope['scope'], array('pages_show_list', 'pages_manage_posts')) ) {
+                            if ( ! empty($g_scope['target_ids']) ) {
+                                $found_page_ids = array_merge($found_page_ids, $g_scope['target_ids']);
+                            }
+                        }
+                    }
+                    $found_page_ids = array_unique($found_page_ids);
+                    
+                    if ( ! empty($found_page_ids) ) {
+                        $target_page_id = $found_page_ids[0];
+                        error_log('[HashPoster FB Debug] found allowed Page ID from scopes: ' . $target_page_id . '. Querying directly.');
+                        
+                        $page_url = "https://graph.facebook.com/v24.0/{$target_page_id}?fields=id,name,access_token&access_token=" . urlencode($user_token);
+                        $page_response = wp_remote_get( $page_url );
+                        
+                        if ( is_wp_error( $page_response ) ) {
+                            error_log('[HashPoster FB Debug] direct page query WP_Error: ' . $page_response->get_error_message());
+                        } else {
+                            $page_body = wp_remote_retrieve_body( $page_response );
+                            error_log('[HashPoster FB Debug] direct page query response: ' . $page_body);
+                            $page_data = json_decode( $page_body, true );
+                            if ( isset($page_data['access_token']) ) {
+                                $page_id = $page_data['id'];
+                                $page_access_token = $page_data['access_token'];
+                                error_log('[HashPoster FB Debug] successfully retrieved Page Access Token for: ' . $page_data['name']);
+                            }
+                        }
+                    } else {
+                        error_log('[HashPoster FB Debug] no target page IDs found in granular scopes');
                     }
                 }
             }
 
+            error_log('[HashPoster FB Debug] storing tokens - page_id: ' . $page_id);
             $this->store_tokens( 'facebook', array(
                 'access_token' => $page_access_token ?: $body['access_token'],
                 'page_id' => $page_id,
@@ -458,13 +539,14 @@ class HashPoster_OAuth_Handler {
             ) );
 
             delete_option( 'hashposter_oauth_state_facebook' );
+            error_log('[HashPoster FB Debug] redirecting to success tab');
             wp_redirect( admin_url( 'admin.php?page=hashposter-settings&tab=platforms&oauth_success=facebook' ) );
             exit;
         } else {
+            error_log('[HashPoster FB Debug] token exchange returned body without access_token');
             $this->oauth_error_redirect( 'Facebook token exchange failed: ' . ( $body['error']['message'] ?? 'Unknown error' ) );
         }
     }
-
     /**
      * Handle X (Twitter) OAuth callback using OAuth 1.0a
      */
@@ -507,7 +589,7 @@ class HashPoster_OAuth_Handler {
         }
 
         // Include TwitterOAuth library
-        require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php';
+        if ( file_exists( HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php' ) ) { require_once HASHPOSTER_PATH . 'includes/twitteroauth/autoload.php'; } else { return false; }
 
         try {
             $connection = new Abraham\TwitterOAuth\TwitterOAuth(
