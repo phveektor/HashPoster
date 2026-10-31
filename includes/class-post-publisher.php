@@ -192,14 +192,6 @@ class HashPoster_Post_Publisher {
             error_log('[HashPoster] Post status change for post ID ' . $post->ID . ': ' . $old_status . ' → ' . $new_status);
         }
         
-        // Only autopost on new publish, not on draft/update/trash
-        if ( $new_status !== 'publish' || $old_status === 'publish' ) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Skipping - not a new publish.');
-            }
-            return;
-        }
-
         // Check if plugin is enabled
         $settings = $this->get_cached_settings();
         if ( empty( $settings['enabled'] ) ) {
@@ -209,28 +201,46 @@ class HashPoster_Post_Publisher {
             return;
         }
 
+        // Only autopost when status is 'publish'
+        if ( $new_status !== 'publish' ) {
+            return;
+        }
+
         // Skip non-public post types
         $post_type = get_post_type_object( $post->post_type );
-        if ( !$post_type || !$post_type->public ) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Skipping non-public post type: ' . $post->post_type);
-            }
+        if ( !$post_type || !$post_type->public || $post->post_type !== 'post' ) {
             return;
         }
 
-        // Only autopost for posts, not pages or other post types
-        if ( $post->post_type !== 'post' ) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Skipping non-post post type: ' . $post->post_type);
-            }
-            return;
-        }
-
-        // Prevent duplicate autoposts
+        // Detect if this is an update to an already-published post
+        $disable_on_update = ! isset( $settings['disable_on_update'] ) || ! empty( $settings['disable_on_update'] );
         $autoposted = get_post_meta( $post->ID, '_hashposter_autoposted', true );
-        if ($autoposted) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Post ' . $post->ID . ' already autoposted on: ' . $autoposted);
+        $first_published = get_post_meta( $post->ID, '_hashposter_first_published', true );
+        $post_social_settings = get_post_meta( $post->ID, '_hashposter_social_settings', true );
+        $explicit_repost = ! empty( $post_social_settings['repost_on_update'] ) && $post_social_settings['repost_on_update'] === '1';
+
+        // Check if this post was already published before
+        $is_update = false;
+        if ( $old_status === 'publish' ) {
+            $is_update = true;
+        } elseif ( ! empty( $autoposted ) || ! empty( $first_published ) ) {
+            $is_update = true;
+        } elseif ( ! empty( $post->post_date_gmt ) && $post->post_date_gmt !== '0000-00-00 00:00:00' && strtotime( $post->post_date_gmt ) < ( time() - 300 ) ) {
+            // Post date was established more than 5 minutes ago — subsequent save is an update
+            $is_update = true;
+        }
+
+        if ( $is_update ) {
+            if ( $disable_on_update && ! $explicit_repost ) {
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                    error_log( '[HashPoster] Post ' . $post->ID . ' is an update. Skipping autopost (disable_on_update is active).' );
+                }
+                return;
+            }
+        } elseif ( ! empty( $autoposted ) ) {
+            // New post publish, but already autoposted
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( '[HashPoster] Post ' . $post->ID . ' already autoposted on: ' . $autoposted );
             }
             return;
         }
@@ -384,11 +394,20 @@ class HashPoster_Post_Publisher {
                 update_post_meta( $post_id, '_hashposter_results', $publish_result['platforms'] );
             }
 
-            if ( ! empty( $publish_result['success'] ) ) {
-                update_post_meta( $post_id, '_hashposter_autoposted', current_time( 'mysql' ) );
-                if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] Scheduled post ' . $post_id . ' successfully autoposted');
-                }
+            // Always record first_published and autoposted timestamp
+            update_post_meta( $post_id, '_hashposter_autoposted', current_time( 'mysql' ) );
+            if ( ! get_post_meta( $post_id, '_hashposter_first_published', true ) ) {
+                update_post_meta( $post_id, '_hashposter_first_published', current_time( 'mysql' ) );
+            }
+            // Reset repost_on_update so subsequent edits don't keep reposting
+            $post_meta_data = get_post_meta( $post_id, '_hashposter_social_settings', true );
+            if ( is_array( $post_meta_data ) ) {
+                $post_meta_data['repost_on_update'] = '0';
+                $post_meta_data['enabled'] = '0';
+                update_post_meta( $post_id, '_hashposter_social_settings', $post_meta_data );
+            }
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('[HashPoster] Scheduled post ' . $post_id . ' autoposted');
             }
 
             delete_transient( $lock_key );
@@ -453,14 +472,35 @@ class HashPoster_Post_Publisher {
         // Get available platforms
         $available_platforms = $this->get_available_platforms();
 
+        $already_autoposted = get_post_meta( $post->ID, '_hashposter_autoposted', true );
+        $is_published_post = ( $post->post_status === 'publish' );
         ?>
         <div id="hashposter-post-controls">
-            <p>
-                <label>
-                    <input type="checkbox" name="hashposter_social[enabled]" value="1" <?php checked( $settings['enabled'], '1' ); ?> />
-                    <strong><?php _e( 'Enable social media posting for this post', 'hashposter' ); ?></strong>
-                </label>
-            </p>
+            <?php if ( $is_published_post || ! empty( $already_autoposted ) ) : ?>
+                <div style="background:#e7f3fe; border-left:4px solid #2271b1; padding:8px 12px; margin-bottom:12px; border-radius:2px;">
+                    <strong><?php _e( 'Social Status:', 'hashposter' ); ?></strong>
+                    <?php if ( ! empty( $already_autoposted ) ) : ?>
+                        <span><?php printf( __( 'Shared on %s', 'hashposter' ), esc_html( $already_autoposted ) ); ?></span>
+                    <?php else : ?>
+                        <span><?php _e( 'Post already published.', 'hashposter' ); ?></span>
+                    <?php endif; ?>
+                </div>
+                <p>
+                    <label>
+                        <input type="checkbox" name="hashposter_social[repost_on_update]" value="1" <?php checked( ! empty( $settings['repost_on_update'] ) ); ?> />
+                        <strong><?php _e( 'Repost to social media on this update', 'hashposter' ); ?></strong>
+                    </label>
+                    <br><small style="color:#666;"><?php _e( 'Leave unchecked to keep existing social posts unchanged.', 'hashposter' ); ?></small>
+                </p>
+                <input type="hidden" name="hashposter_social[enabled]" value="<?php echo ! empty( $settings['repost_on_update'] ) ? '1' : '0'; ?>" />
+            <?php else : ?>
+                <p>
+                    <label>
+                        <input type="checkbox" name="hashposter_social[enabled]" value="1" <?php checked( $settings['enabled'], '1' ); ?> />
+                        <strong><?php _e( 'Enable social media posting for this post', 'hashposter' ); ?></strong>
+                    </label>
+                </p>
+            <?php endif; ?>
 
             <div id="hashposter-platforms-section" style="<?php echo $settings['enabled'] === '1' ? '' : 'display:none;'; ?>">
                 <p>
@@ -562,6 +602,7 @@ class HashPoster_Post_Publisher {
         // Sanitize data
         $sanitized = array(
             'enabled' => isset( $data['enabled'] ) ? '1' : '0',
+            'repost_on_update' => isset( $data['repost_on_update'] ) ? '1' : '0',
             'platforms' => $platforms,
             'custom_content' => isset( $data['custom_content'] ) ? sanitize_textarea_field( $data['custom_content'] ) : '',
             'schedule_time' => isset( $data['schedule_time'] ) ? sanitize_text_field( $data['schedule_time'] ) : '',

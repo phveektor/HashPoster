@@ -2,7 +2,7 @@
 /*
 Plugin Name: HashPoster
 Description: Lightweight autoposter to publish WordPress content to selected social media platforms with short link support.
-Version: 2.1.0
+Version: 2.2.0
 Author: Phveektor
 Author URI: https://github.com/phveektor
 */
@@ -16,7 +16,7 @@ if ( ! function_exists( 'plugin_dir_path' ) || ! function_exists( 'plugin_dir_ur
 
 define( 'HASHPOSTER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'HASHPOSTER_URL', plugin_dir_url( __FILE__ ) );
-define( 'HASHPOSTER_VERSION', '2.1.0' );
+define( 'HASHPOSTER_VERSION', '2.2.0' );
 
 // GitHub Updater via Plugin Update Checker
 if ( file_exists( HASHPOSTER_PATH . 'includes/plugin-update-checker/plugin-update-checker.php' ) ) {
@@ -59,6 +59,10 @@ class HashPoster {
         $default_settings = array(
             'enabled' => '1',
             'logging' => '0',
+            'disable_on_update' => '1',
+            'enable_utm' => '1',
+            'utm_campaign' => 'hashposter',
+            'utm_medium' => 'social',
             'scheduling' => '0',
             'delay_minutes' => '0'
         );

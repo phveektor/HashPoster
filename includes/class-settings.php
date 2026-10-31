@@ -151,6 +151,26 @@ class HashPoster_Settings {
                                         <span class="hp-slider"></span>
                                     </label>
                                 </div>
+                                <div class="hp-toggle-row">
+                                    <div class="hp-toggle-info">
+                                        <h4>Disable for Updated Posts</h4>
+                                        <p>Only share when a post is published for the first time. Prevents resending to socials on edits and updates.</p>
+                                    </div>
+                                    <label class="hp-switch">
+                                        <input type="checkbox" name="hashposter_settings[disable_on_update]" value="1" <?php checked( ! isset($settings['disable_on_update']) || ! empty($settings['disable_on_update']) ); ?>>
+                                        <span class="hp-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="hp-toggle-row">
+                                    <div class="hp-toggle-info">
+                                        <h4>UTM Campaign Tracking (GA4)</h4>
+                                        <p>Inject Google Analytics tracking parameters (<code>?utm_source=platform&utm_medium=social</code>) into shared links to eliminate "(not set)" and "(direct)" visits from privacy-focused mobile apps.</p>
+                                    </div>
+                                    <label class="hp-switch">
+                                        <input type="checkbox" name="hashposter_settings[enable_utm]" value="1" <?php checked( ! isset($settings['enable_utm']) || ! empty($settings['enable_utm']) ); ?>>
+                                        <span class="hp-slider"></span>
+                                    </label>
+                                </div>
                             </div>
                             
                             <div class="hp-card">
@@ -548,6 +568,10 @@ class HashPoster_Settings {
         return array(
             'enabled' => !empty($settings['enabled']) ? 1 : 0,
             'logging' => !empty($settings['logging']) ? 1 : 0,
+            'disable_on_update' => !empty($settings['disable_on_update']) ? 1 : 0,
+            'enable_utm' => !empty($settings['enable_utm']) ? 1 : 0,
+            'utm_campaign' => !empty($settings['utm_campaign']) ? sanitize_text_field($settings['utm_campaign']) : 'hashposter',
+            'utm_medium' => !empty($settings['utm_medium']) ? sanitize_text_field($settings['utm_medium']) : 'social',
             'scheduling' => !empty($settings['scheduling']) ? 1 : 0,
             'delay_minutes' => self::validate_delay_minutes($settings['delay_minutes'] ?? 0),
             'facebook_app_id' => self::sanitize_alphanumeric($settings['facebook_app_id'] ?? ''),

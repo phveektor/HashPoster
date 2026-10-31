@@ -455,13 +455,42 @@ class HashPoster_Publisher {
         return trim( $excerpt );
     }
 
+    /**
+     * Add Google Analytics UTM parameters to outbound social links to eliminate "(not set)" in GA4
+     */
+    private function add_utm_parameters( $url, $platform ) {
+        $settings = get_option( 'hashposter_settings', array() );
+        $enable_utm = ! isset( $settings['enable_utm'] ) || ! empty( $settings['enable_utm'] );
+        if ( ! $enable_utm ) {
+            return $url;
+        }
+
+        // Standardize platform name for GA4
+        $source_map = array(
+            'bluesky'  => 'bluesky',
+            'telegram' => 'telegram',
+            'linkedin' => 'linkedin',
+            'facebook' => 'facebook',
+            'x'        => 'twitter',
+        );
+        $source = $source_map[ strtolower( $platform ) ] ?? strtolower( $platform );
+
+        $campaign = ! empty( $settings['utm_campaign'] ) ? sanitize_text_field( $settings['utm_campaign'] ) : 'hashposter';
+        $medium   = ! empty( $settings['utm_medium'] )   ? sanitize_text_field( $settings['utm_medium'] )   : 'social';
+
+        $utm_params = array(
+            'utm_source'   => $source,
+            'utm_medium'   => $medium,
+            'utm_campaign' => $campaign,
+        );
+
+        return add_query_arg( $utm_params, $url );
+    }
+
     private function get_url_for_platform( $post_id, $platform ) {
         // LinkedIn MUST use full permalink for proper link scraping - NEVER use shortlinks
         if ( $platform === 'linkedin' ) {
             $permalink = get_permalink( $post_id );
-            
-            // Debug: Log the initial permalink we get
-            error_log( '[HashPoster LinkedIn URL DEBUG] Initial permalink from get_permalink(): ' . $permalink );
             
             // Ensure we have a proper permalink structure - if it's ugly (?p=123), try to force pretty
             if ( strpos( $permalink, '?p=' ) !== false ) {
@@ -469,12 +498,11 @@ class HashPoster_Publisher {
                 if ( $post && !empty( $post->post_name ) ) {
                     $home_url = home_url( '/' );
                     $permalink = rtrim( $home_url, '/' ) . '/' . $post->post_name . '/';
-                    error_log( '[HashPoster LinkedIn URL DEBUG] Reconstructed pretty permalink: ' . $permalink );
                 }
             }
             
-            error_log( '[HashPoster LinkedIn URL DEBUG] FINAL permalink for LinkedIn (NO SHORTLINKS): ' . $permalink );
-            return $permalink;
+            // Attach UTM parameters for GA4 tracking
+            return $this->add_utm_parameters( $permalink, $platform );
         }
         
         // For other platforms, allow shortlinks
@@ -487,7 +515,6 @@ class HashPoster_Publisher {
 
         // Ensure we have a proper permalink structure - if it's ugly (?p=123), try to force pretty
         if ( strpos( $permalink, '?p=' ) !== false ) {
-            // If permalink structure gives ugly URL, try to get the post slug and reconstruct
             $post = get_post( $post_id );
             if ( $post && !empty( $post->post_name ) ) {
                 $home_url = home_url( '/' );
@@ -495,22 +522,24 @@ class HashPoster_Publisher {
             }
         }
 
+        // Add UTM parameters to destination URL
+        $tracked_url = $this->add_utm_parameters( $permalink, $platform );
+
         if ( $use_bitly ) {
             $api_handler = new HashPoster_API_Handler();
-            $short_url = $api_handler->get_short_url( $permalink, $post_id );
-            if ( $short_url && $short_url !== $permalink ) {
+            $short_url = $api_handler->get_short_url( $tracked_url, $post_id );
+            if ( $short_url && $short_url !== $tracked_url ) {
                 return $short_url;
             }
         }
 
         if ( $use_wordpress ) {
             $wp_shortlink = wp_get_shortlink( $post_id );
-            // Only use WordPress shortlink if it's actually shorter and not ugly
             if ( $wp_shortlink && $wp_shortlink !== $permalink && strpos( $wp_shortlink, '?p=' ) === false ) {
-                return $wp_shortlink;
+                return $this->add_utm_parameters( $wp_shortlink, $platform );
             }
         }
 
-        return $permalink;
+        return $tracked_url;
     }
 }
