@@ -46,7 +46,7 @@ class HashPoster_Analytics {
             true
         );
 
-        $js_ver = file_exists( HASHPOSTER_PLUGIN_DIR . 'assets/js/analytics.js' ) ? filemtime( HASHPOSTER_PLUGIN_DIR . 'assets/js/analytics.js' ) : '2.3.0';
+        $js_ver = file_exists( HASHPOSTER_PATH . 'assets/js/analytics.js' ) ? filemtime( HASHPOSTER_PATH . 'assets/js/analytics.js' ) : '2.3.0';
         wp_enqueue_script(
             'hashposter-analytics',
             HASHPOSTER_URL . 'assets/js/analytics.js',

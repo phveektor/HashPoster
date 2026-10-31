@@ -15,6 +15,7 @@ if ( ! function_exists( 'plugin_dir_path' ) || ! function_exists( 'plugin_dir_ur
 }
 
 define( 'HASHPOSTER_PATH', plugin_dir_path( __FILE__ ) );
+define( 'HASHPOSTER_PLUGIN_DIR', HASHPOSTER_PATH );
 define( 'HASHPOSTER_URL', plugin_dir_url( __FILE__ ) );
 define( 'HASHPOSTER_VERSION', '2.2.0' );
 
