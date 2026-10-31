@@ -230,7 +230,9 @@ class HashPoster_Bulk_Posting {
     }
 
     /**
-     * public function enqueue_bulk_posting_assets( $hook ) {
+     * Enqueue bulk posting assets
+     */
+    public function enqueue_bulk_posting_assets( $hook ) {
         if ( $hook !== 'hashposter_page_hashposter-bulk-posting' ) {
             return;
         }
