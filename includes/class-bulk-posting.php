@@ -5,22 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 /**
  * HashPoster Bulk Posting
  *
- * Provides bulk posting functionality for multip                        <p>
-                            <label>
-                                <input type="checkbox" id="hashposter-skip-featured-image" />
-                                <?php _e( 'Skip featured images (text only)', 'hashposter' ); ?>
-                            </label>
-                        </p>
-                        
-                        <p>
-                            <label>
-                                <input type="checkbox" id="hashposter-prefer-url-cards" />
-                                <?php _e( 'Prefer URL cards over uploaded images', 'hashposter' ); ?>
-                            </label>
-                            <small style="display: block; color: #666; margin-top: 5px;">
-                                <?php _e( 'URL cards show website preview with title, description, and meta image from the target page. <strong>Default for X/Twitter, Bluesky, and LinkedIn.</strong> Supported by X/Twitter, LinkedIn, Bluesky, and Facebook.', 'hashposter' ); ?>
-                            </small>
-                        </p>
+ * Provides bulk social media posting across multiple platforms.
  */
 class HashPoster_Bulk_Posting {
 
@@ -55,268 +40,197 @@ class HashPoster_Bulk_Posting {
 
         // Get available platforms
         $available_platforms = $this->get_available_platforms();
-
         ?>
-        <div class="wrap">
-            <h1><?php _e( 'HashPoster - Bulk Social Media Posting', 'hashposter' ); ?></h1>
-
-            <div class="hashposter-bulk-container">
-                <div class="hashposter-bulk-sidebar">
-                    <h3><?php _e( 'Select Posts', 'hashposter' ); ?></h3>
-
-                    <div class="hashposter-filters">
-                        <select id="hashposter-post-type" class="widefat">
-                            <option value="post"><?php _e( 'Posts', 'hashposter' ); ?></option>
-                            <option value="page"><?php _e( 'Pages', 'hashposter' ); ?></option>
-                            <?php
-                            $custom_post_types = get_post_types( array( 'public' => true, '_builtin' => false ), 'objects' );
-                            foreach ( $custom_post_types as $cpt ) {
-                                echo '<option value="' . esc_attr( $cpt->name ) . '">' . esc_html( $cpt->label ) . '</option>';
-                            }
-                            ?>
-                        </select>
-
-                        <select id="hashposter-post-status" class="widefat">
-                            <option value="publish"><?php _e( 'Published', 'hashposter' ); ?></option>
-                            <option value="draft"><?php _e( 'Drafts', 'hashposter' ); ?></option>
-                            <option value="pending"><?php _e( 'Pending Review', 'hashposter' ); ?></option>
-                        </select>
-
-                        <input type="text" id="hashposter-search" class="widefat" placeholder="<?php _e( 'Search posts...', 'hashposter' ); ?>" />
-
-                        <select id="hashposter-category" class="widefat">
-                            <option value=""><?php _e( 'All Categories', 'hashposter' ); ?></option>
-                            <?php
-                            $categories = get_categories( array( 'hide_empty' => false ) );
-                            foreach ( $categories as $category ) {
-                                echo '<option value="' . esc_attr( $category->term_id ) . '">' . esc_html( $category->name ) . '</option>';
-                            }
-                            ?>
-                        </select>
-                    </div>
-
-                    <div class="hashposter-post-selection">
-                        <label class="hashposter-select-all-label">
-                            <input type="checkbox" id="hashposter-select-all" />
-                            <?php _e( 'Select All', 'hashposter' ); ?>
-                        </label>
-                        <span id="hashposter-selection-count" class="hashposter-selection-count">0 posts selected</span>
-                    </div>
-
-                    <div id="hashposter-posts-list" class="hashposter-posts-list">
-                        <p><?php _e( 'Loading posts...', 'hashposter' ); ?></p>
-                    </div>
-                </div>
-
-                <div class="hashposter-bulk-main">
-                    <h3><?php _e( 'Social Media Settings', 'hashposter' ); ?></h3>
-
-                    <div class="hashposter-platforms-selection">
-                        <h4><?php _e( 'Select Platforms', 'hashposter' ); ?></h4>
-                        <?php foreach ( $available_platforms as $platform => $label ) : ?>
-                            <label class="hashposter-platform-checkbox">
-                                <input type="checkbox" name="platforms[]" value="<?php echo esc_attr( $platform ); ?>" />
-                                <span class="platform-icon platform-<?php echo esc_attr( $platform ); ?>"></span>
-                                <?php echo esc_html( $label ); ?>
-                            </label>
-                        <?php endforeach; ?>
-                    </div>
-
-                    <div class="hashposter-content-settings">
-                        <h4><?php _e( 'Content Settings', 'hashposter' ); ?></h4>
-
-                        <p>
-                            <label>
-                                <input type="checkbox" id="hashposter-use-custom-content" />
-                                <?php _e( 'Use custom content for all posts', 'hashposter' ); ?>
-                            </label>
-                        </p>
-
-                        <div id="hashposter-custom-content-section" style="display: none;">
-                            <textarea id="hashposter-custom-content" rows="4" class="widefat"
-                                placeholder="<?php _e( 'Enter custom content. Use {title}, {url}, {excerpt} as placeholders.', 'hashposter' ); ?>"></textarea>
+        <div class="wrap hashposter-settings">
+            <div class="hp-dashboard">
+                
+                <!-- Unified Responsive Sidebar -->
+                <aside class="hp-sidebar">
+                    <div class="hp-brand-header">
+                        <div class="hp-brand-icon"><span class="dashicons dashicons-share"></span></div>
+                        <div class="hp-brand-text">
+                            <h2>HashPoster</h2>
+                            <span>PRO</span>
                         </div>
-
-                        <p>
-                            <label>
-                                <input type="checkbox" id="hashposter-skip-featured-image" />
-                                <?php _e( 'Skip featured images in social posts', 'hashposter' ); ?>
-                            </label>
-                        </p>
-
-                        <p>
-                            <label>
-                                <input type="checkbox" id="hashposter-prefer-url-cards" />
-                                <?php _e( 'Prefer URL cards over uploaded images', 'hashposter' ); ?>
-                            </label>
-                            <small style="display: block; color: #666; margin-top: 5px;">
-                                <?php _e( 'URL cards show website preview with title, description, and meta image from the target page. <strong>Default for X/Twitter, Bluesky, and LinkedIn.</strong> Supported by X/Twitter, LinkedIn, Bluesky, and Facebook.', 'hashposter' ); ?>
-                            </small>
-                        </p>
                     </div>
 
-                    <div class="hashposter-scheduling">
-                        <h4><?php _e( 'Scheduling', 'hashposter' ); ?></h4>
+                    <nav class="hp-nav">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-settings' ) ); ?>" class="hp-nav-item">
+                            <span class="dashicons dashicons-admin-generic"></span>
+                            Settings
+                        </a>
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-analytics' ) ); ?>" class="hp-nav-item">
+                            <span class="dashicons dashicons-chart-pie"></span>
+                            Analytics
+                        </a>
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-bulk-posting' ) ); ?>" class="hp-nav-item active">
+                            <span class="dashicons dashicons-grid-view"></span>
+                            Bulk Posting
+                        </a>
+                    </nav>
+                </aside>
 
-                        <p>
-                            <label>
-                                <input type="radio" name="posting_schedule" value="immediate" checked />
-                                <?php _e( 'Post immediately', 'hashposter' ); ?>
-                            </label>
-                        </p>
-
-                        <p>
-                            <label>
-                                <input type="radio" name="posting_schedule" value="staggered" />
-                                <?php _e( 'Stagger posts (one every few minutes)', 'hashposter' ); ?>
-                            </label>
-                            <input type="number" id="hashposter-stagger-minutes" min="1" max="60" value="5" style="width: 60px; margin-left: 10px;" />
-                            <?php _e( 'minutes', 'hashposter' ); ?>
-                        </p>
-                    </div>
-
-                    <div class="hashposter-bulk-actions">
-                        <button type="button" id="hashposter-preview-bulk" class="button button-secondary">
-                            <?php _e( 'Preview Posts', 'hashposter' ); ?>
-                        </button>
-                        <button type="button" id="hashposter-publish-bulk" class="button button-primary">
-                            <?php _e( 'Publish to Social Media', 'hashposter' ); ?>
-                        </button>
-                    </div>
-
-                    <div id="hashposter-bulk-progress" class="hashposter-progress" style="display: none;">
-                        <div class="hashposter-progress-bar">
-                            <div class="hashposter-progress-fill"></div>
+                <!-- Main Content -->
+                <main class="hp-main">
+                    <div class="hp-topbar">
+                        <div class="hp-topbar-title">
+                            <h1><span class="dashicons dashicons-grid-view" style="font-size: 26px; width: 26px; height: 26px; margin-right: 8px; color: var(--hp-brand);"></span> <?php _e( 'Bulk Social Media Posting', 'hashposter' ); ?></h1>
+                            <p><?php _e( 'Filter, select, and batch publish your WordPress posts to connected social channels.', 'hashposter' ); ?></p>
                         </div>
-                        <div class="hashposter-progress-text">
-                            <?php _e( 'Publishing posts...', 'hashposter' ); ?>
-                        </div>
-                        <div id="hashposter-progress-details"></div>
                     </div>
-                </div>
+
+                    <div class="hp-tab-panel active" style="padding: 32px 36px; border:none; display:block;">
+                        <div class="hp-bulk-grid">
+                            
+                            <!-- Left: Select Posts Column -->
+                            <div class="hp-card hp-bulk-sidebar">
+                                <h4 class="hp-section-title"><?php _e( 'Select Posts', 'hashposter' ); ?></h4>
+
+                                <div class="hashposter-filters" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+                                    <select id="hashposter-post-type" class="hp-select">
+                                        <option value="post"><?php _e( 'Posts', 'hashposter' ); ?></option>
+                                        <option value="page"><?php _e( 'Pages', 'hashposter' ); ?></option>
+                                        <?php
+                                        $custom_post_types = get_post_types( array( 'public' => true, '_builtin' => false ), 'objects' );
+                                        foreach ( $custom_post_types as $cpt ) {
+                                            echo '<option value="' . esc_attr( $cpt->name ) . '">' . esc_html( $cpt->label ) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+
+                                    <select id="hashposter-post-status" class="hp-select">
+                                        <option value="publish"><?php _e( 'Published', 'hashposter' ); ?></option>
+                                        <option value="draft"><?php _e( 'Drafts', 'hashposter' ); ?></option>
+                                        <option value="pending"><?php _e( 'Pending Review', 'hashposter' ); ?></option>
+                                    </select>
+
+                                    <input type="text" id="hashposter-search" class="hp-input" placeholder="<?php _e( 'Search posts...', 'hashposter' ); ?>" />
+
+                                    <select id="hashposter-category" class="hp-select">
+                                        <option value=""><?php _e( 'All Categories', 'hashposter' ); ?></option>
+                                        <?php
+                                        $categories = get_categories( array( 'hide_empty' => false ) );
+                                        foreach ( $categories as $category ) {
+                                            echo '<option value="' . esc_attr( $category->term_id ) . '">' . esc_html( $category->name ) . '</option>';
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+
+                                <div class="hp-bulk-select-all">
+                                    <label class="hashposter-select-all-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                                        <input type="checkbox" id="hashposter-select-all" />
+                                        <?php _e( 'Select All', 'hashposter' ); ?>
+                                    </label>
+                                    <span id="hashposter-selection-count" class="hp-badge hp-badge-success" style="font-size:11px;">0 selected</span>
+                                </div>
+
+                                <div id="hashposter-posts-list" class="hashposter-posts-list">
+                                    <p style="color:var(--hp-text-muted); font-size:13px; padding:12px 0; text-align:center;"><?php _e( 'Loading posts...', 'hashposter' ); ?></p>
+                                </div>
+                            </div>
+
+                            <!-- Right: Social Media Settings Column -->
+                            <div class="hp-card hp-bulk-main">
+                                <h4 class="hp-section-title"><?php _e( 'Target Social Networks', 'hashposter' ); ?></h4>
+
+                                <div class="hashposter-platforms-selection" style="margin-bottom:24px;">
+                                    <?php foreach ( $available_platforms as $platform => $label ) : ?>
+                                        <label class="hashposter-platform-checkbox">
+                                            <input type="checkbox" name="platforms[]" value="<?php echo esc_attr( $platform ); ?>" />
+                                            <span class="hp-platform-pill hp-pill-<?php echo esc_attr( $platform ); ?>"><?php echo esc_html( $label ); ?></span>
+                                        </label>
+                                    <?php endforeach; ?>
+                                </div>
+
+                                <h4 class="hp-section-title"><?php _e( 'Content & Display Options', 'hashposter' ); ?></h4>
+                                <div class="hashposter-content-settings" style="margin-bottom:24px;">
+                                    <div class="hp-toggle-row">
+                                        <div class="hp-toggle-info">
+                                            <h4><?php _e( 'Custom Content Override', 'hashposter' ); ?></h4>
+                                            <p><?php _e( 'Apply a uniform custom message or hashtags to all selected posts.', 'hashposter' ); ?></p>
+                                        </div>
+                                        <label class="hp-switch">
+                                            <input type="checkbox" id="hashposter-use-custom-content" />
+                                            <span class="hp-slider"></span>
+                                        </label>
+                                    </div>
+
+                                    <div id="hashposter-custom-content-section" style="display: none; margin-top:14px;">
+                                        <textarea id="hashposter-custom-content" rows="4" class="hp-input" style="min-height:90px;"
+                                            placeholder="<?php _e( 'Enter custom message. Use {title}, {url}, {excerpt} as placeholders.', 'hashposter' ); ?>"></textarea>
+                                    </div>
+
+                                    <div class="hp-toggle-row">
+                                        <div class="hp-toggle-info">
+                                            <h4><?php _e( 'Skip Featured Images', 'hashposter' ); ?></h4>
+                                            <p><?php _e( 'Publish as text/card link only without uploading image attachments.', 'hashposter' ); ?></p>
+                                        </div>
+                                        <label class="hp-switch">
+                                            <input type="checkbox" id="hashposter-skip-featured-image" />
+                                            <span class="hp-slider"></span>
+                                        </label>
+                                    </div>
+
+                                    <div class="hp-toggle-row">
+                                        <div class="hp-toggle-info">
+                                            <h4><?php _e( 'Prefer Rich URL Cards', 'hashposter' ); ?></h4>
+                                            <p><?php _e( 'Use rich Open Graph web cards instead of raw uploaded images.', 'hashposter' ); ?></p>
+                                        </div>
+                                        <label class="hp-switch">
+                                            <input type="checkbox" id="hashposter-prefer-url-cards" checked />
+                                            <span class="hp-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <h4 class="hp-section-title"><?php _e( 'Dispatch Schedule', 'hashposter' ); ?></h4>
+                                <div class="hashposter-scheduling" style="display:flex; flex-direction:column; gap:10px; margin-bottom:24px;">
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px;">
+                                        <input type="radio" name="posting_schedule" value="immediate" checked />
+                                        <span><?php _e( 'Post immediately in sequence', 'hashposter' ); ?></span>
+                                    </label>
+
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px;">
+                                        <input type="radio" name="posting_schedule" value="staggered" />
+                                        <span><?php _e( 'Stagger posts with interval', 'hashposter' ); ?></span>
+                                        <input type="number" id="hashposter-stagger-minutes" class="hp-input" min="1" max="60" value="5" style="width: 70px; margin-left: 8px; display:inline-block;" />
+                                        <span style="color:var(--hp-text-muted); font-size:13px;"><?php _e( 'minutes apart', 'hashposter' ); ?></span>
+                                    </label>
+                                </div>
+
+                                <div class="hashposter-bulk-actions">
+                                    <button type="button" id="hashposter-preview-bulk" class="hp-btn hp-btn-secondary">
+                                        <span class="dashicons dashicons-visibility" style="font-size:16px; width:16px; height:16px;"></span>
+                                        <?php _e( 'Preview Posts', 'hashposter' ); ?>
+                                    </button>
+                                    <button type="button" id="hashposter-publish-bulk" class="hp-btn hp-btn-primary">
+                                        <span class="dashicons dashicons-share" style="font-size:16px; width:16px; height:16px;"></span>
+                                        <?php _e( 'Publish to Social Media', 'hashposter' ); ?>
+                                    </button>
+                                </div>
+
+                                <div id="hashposter-bulk-progress" class="hashposter-progress" style="display: none;">
+                                    <div class="hashposter-progress-bar">
+                                        <div class="hashposter-progress-fill"></div>
+                                    </div>
+                                    <div class="hashposter-progress-text" style="font-size:13px; font-weight:600; color:var(--hp-text);">
+                                        <?php _e( 'Publishing posts...', 'hashposter' ); ?>
+                                    </div>
+                                    <div id="hashposter-progress-details" style="font-size:12px; color:var(--hp-text-muted); margin-top:4px;"></div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </main>
             </div>
         </div>
-
-        <style>
-        .hashposter-bulk-container {
-            display: flex;
-            gap: 20px;
-            margin-top: 20px;
-        }
-
-        .hashposter-bulk-sidebar {
-            flex: 0 0 300px;
-            background: #fff;
-            border: 1px solid #ddd;
-            padding: 20px;
-            border-radius: 5px;
-        }
-
-        .hashposter-bulk-main {
-            flex: 1;
-            background: #fff;
-            border: 1px solid #ddd;
-            padding: 20px;
-            border-radius: 5px;
-        }
-
-        .hashposter-filters select,
-        .hashposter-filters input {
-            margin-bottom: 10px;
-        }
-
-        .hashposter-post-selection {
-            padding: 10px;
-            background: #f5f5f5;
-            border: 1px solid #ddd;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .hashposter-posts-header {
-            padding: 8px;
-            background: #f0f0f0;
-            border: 1px solid #ddd;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-weight: bold;
-        }
-
-        .hashposter-posts-list {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            padding: 10px;
-            margin-top: 10px;
-        }
-
-        .hashposter-post-item {
-            display: flex;
-            align-items: center;
-            padding: 8px;
-            border-bottom: 1px solid #f0f0f0;
-        }
-
-        .hashposter-post-item:last-child {
-            border-bottom: none;
-        }
-
-        .hashposter-platforms-selection {
-            margin-bottom: 30px;
-        }
-
-        .hashposter-platform-checkbox {
-            display: block;
-            margin-bottom: 10px;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .hashposter-platform-checkbox:hover {
-            background: #f9f9f9;
-        }
-
-        .hashposter-content-settings small {
-            font-style: italic;
-            line-height: 1.4;
-        }
-
-        .hashposter-progress {
-            margin-top: 20px;
-            padding: 20px;
-            background: #f9f9f9;
-            border-radius: 5px;
-        }
-
-        .hashposter-progress-bar {
-            width: 100%;
-            height: 20px;
-            background: #ddd;
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 10px;
-        }
-
-        .hashposter-progress-fill {
-            height: 100%;
-            background: #007cba;
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-        </style>
         <?php
     }
 
     /**
-     * Enqueue bulk posting assets
-     */
-    public function enqueue_bulk_posting_assets( $hook ) {
+     * public function enqueue_bulk_posting_assets( $hook ) {
         if ( $hook !== 'hashposter_page_hashposter-bulk-posting' ) {
             return;
         }

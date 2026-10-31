@@ -46,11 +46,12 @@ class HashPoster_Analytics {
             true
         );
 
+        $js_ver = file_exists( HASHPOSTER_PLUGIN_DIR . 'assets/js/analytics.js' ) ? filemtime( HASHPOSTER_PLUGIN_DIR . 'assets/js/analytics.js' ) : '2.3.0';
         wp_enqueue_script(
             'hashposter-analytics',
             HASHPOSTER_URL . 'assets/js/analytics.js',
             array( 'jquery', 'chart-js' ),
-            '1.0.0',
+            $js_ver,
             true
         );
 
@@ -75,35 +76,66 @@ class HashPoster_Analytics {
         ?>
         <div class="wrap hashposter-settings">
             <div class="hp-dashboard">
-                <main class="hp-main" style="flex: 1; border-radius: var(--hp-radius-lg);">
+                
+                <!-- Unified Responsive Sidebar -->
+                <aside class="hp-sidebar">
+                    <div class="hp-brand-header">
+                        <div class="hp-brand-icon"><span class="dashicons dashicons-share"></span></div>
+                        <div class="hp-brand-text">
+                            <h2>HashPoster</h2>
+                            <span>PRO</span>
+                        </div>
+                    </div>
+
+                    <nav class="hp-nav">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-settings' ) ); ?>" class="hp-nav-item">
+                            <span class="dashicons dashicons-admin-generic"></span>
+                            Settings
+                        </a>
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-analytics' ) ); ?>" class="hp-nav-item active">
+                            <span class="dashicons dashicons-chart-pie"></span>
+                            Analytics
+                        </a>
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-bulk-posting' ) ); ?>" class="hp-nav-item">
+                            <span class="dashicons dashicons-grid-view"></span>
+                            Bulk Posting
+                        </a>
+                    </nav>
+                </aside>
+
+                <!-- Main Content Area -->
+                <main class="hp-main">
                     
                     <!-- Top Bar -->
                     <div class="hp-topbar">
                         <div class="hp-topbar-title">
-                            <h1><span class="dashicons dashicons-chart-pie" style="font-size: 28px; width: 28px; height: 28px; margin-right: 8px; color: var(--hp-brand);"></span> HashPoster Analytics</h1>
-                            <p>Track your social media publication success and failure rates.</p>
+                            <h1><span class="dashicons dashicons-chart-pie" style="font-size: 26px; width: 26px; height: 26px; margin-right: 8px; color: var(--hp-brand);"></span> Performance Analytics</h1>
+                            <p>Track your automated social media publication metrics, success rates, and live activity.</p>
                         </div>
                     </div>
 
-                    <!-- Main Dashboard Content -->
-                    <div class="hp-tab-panel active" style="padding: 40px; border:none; display:block;">
+                    <!-- Dashboard Content -->
+                    <div class="hp-tab-panel active hp-analytics-panel">
                         
-                        <!-- Filters -->
-                        <div class="hp-card" style="margin-bottom: 32px;">
+                        <!-- Filters Card -->
+                        <div class="hp-card hp-filter-card">
                             <form method="get" action="" class="hp-analytics-filters">
                                 <input type="hidden" name="page" value="hashposter-analytics" />
                                 
-                                <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap;">
-                                    <div>
-                                        <label for="date_from" style="display:block; font-size:13px; font-weight:600; color:var(--hp-text-muted); margin-bottom:6px;">From Date</label>
+                                <div class="hp-filter-row">
+                                    <div class="hp-filter-field">
+                                        <label for="date_from">From Date</label>
                                         <input type="date" id="date_from" name="date_from" class="hp-input" value="<?php echo esc_attr( $date_from ); ?>" />
                                     </div>
-                                    <div>
-                                        <label for="date_to" style="display:block; font-size:13px; font-weight:600; color:var(--hp-text-muted); margin-bottom:6px;">To Date</label>
+                                    <div class="hp-filter-field">
+                                        <label for="date_to">To Date</label>
                                         <input type="date" id="date_to" name="date_to" class="hp-input" value="<?php echo esc_attr( $date_to ); ?>" />
                                     </div>
-                                    <div>
-                                        <button type="submit" class="hp-btn hp-btn-primary" style="padding: 10px 20px;">Update Report</button>
+                                    <div class="hp-filter-btn-wrap">
+                                        <button type="submit" class="hp-btn hp-btn-primary">
+                                            <span class="dashicons dashicons-update" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                            Update Report
+                                        </button>
                                     </div>
                                 </div>
                             </form>
@@ -113,7 +145,9 @@ class HashPoster_Analytics {
                         <div class="hp-stats-grid">
                             
                             <div class="hp-card hp-stat-card">
-                                <div class="hp-stat-icon" style="background: linear-gradient(135deg, #3b82f6, #2563eb);"><span class="dashicons dashicons-megaphone"></span></div>
+                                <div class="hp-stat-icon hp-stat-blue">
+                                    <span class="dashicons dashicons-megaphone"></span>
+                                </div>
                                 <div class="hp-stat-content">
                                     <div class="hp-stat-value" id="total-posts">-</div>
                                     <div class="hp-stat-label">Total Posts Executed</div>
@@ -121,7 +155,9 @@ class HashPoster_Analytics {
                             </div>
                             
                             <div class="hp-card hp-stat-card">
-                                <div class="hp-stat-icon" style="background: linear-gradient(135deg, #10b981, #059669);"><span class="dashicons dashicons-yes-alt"></span></div>
+                                <div class="hp-stat-icon hp-stat-green">
+                                    <span class="dashicons dashicons-yes-alt"></span>
+                                </div>
                                 <div class="hp-stat-content">
                                     <div class="hp-stat-value" id="successful-posts">-</div>
                                     <div class="hp-stat-label">Successful Posts</div>
@@ -129,7 +165,9 @@ class HashPoster_Analytics {
                             </div>
                             
                             <div class="hp-card hp-stat-card">
-                                <div class="hp-stat-icon" style="background: linear-gradient(135deg, #ef4444, #dc2626);"><span class="dashicons dashicons-dismiss"></span></div>
+                                <div class="hp-stat-icon hp-stat-red">
+                                    <span class="dashicons dashicons-dismiss"></span>
+                                </div>
                                 <div class="hp-stat-content">
                                     <div class="hp-stat-value" id="failed-posts">-</div>
                                     <div class="hp-stat-label">Failed Transmissions</div>
@@ -137,7 +175,9 @@ class HashPoster_Analytics {
                             </div>
                             
                             <div class="hp-card hp-stat-card">
-                                <div class="hp-stat-icon" style="background: linear-gradient(135deg, #8b5cf6, #7c3aed);"><span class="dashicons dashicons-awards"></span></div>
+                                <div class="hp-stat-icon hp-stat-amber">
+                                    <span class="dashicons dashicons-awards"></span>
+                                </div>
                                 <div class="hp-stat-content">
                                     <div class="hp-stat-value" id="success-rate">-</div>
                                     <div class="hp-stat-label">Average Success Rate</div>
@@ -146,21 +186,33 @@ class HashPoster_Analytics {
 
                         </div>
 
-                        <!-- Charts and Recent Activity -->
-                        <div style="display:flex; gap:32px; flex-wrap:wrap; margin-top:32px;">
-                            <div class="hp-card" style="flex: 2; min-width:300px;">
-                                <h4 class="hp-section-title">Platform Performance</h4>
-                                <div class="chart-container" style="position:relative; height:350px; margin-top:16px;">
+                        <!-- Charts and Recent Activity Split (Graph Shrunk, Posts Expanded) -->
+                        <div class="hp-analytics-split">
+                            
+                            <!-- Shrunk Graph Card (~38-40% width) -->
+                            <div class="hp-card hp-analytics-chart-card">
+                                <div class="hp-card-header">
+                                    <h4 class="hp-section-title">Platform Performance</h4>
+                                </div>
+                                <div class="chart-container">
                                     <canvas id="platform-chart"></canvas>
                                 </div>
                             </div>
 
-                            <div class="hp-card" style="flex: 1; min-width:300px;">
-                                <h4 class="hp-section-title">Recent Activity Log</h4>
-                                <div id="activity-list" class="hp-activity-list" style="margin-top:16px;">
-                                    <div style="text-align: center; color: var(--hp-text-muted); padding:30px 0;">Loading analytics...</div>
+                            <!-- Expanded Activity Log Card (~60-62% width with Post Titles) -->
+                            <div class="hp-card hp-analytics-activity-card">
+                                <div class="hp-card-header hp-activity-card-header">
+                                    <h4 class="hp-section-title">Recent Activity Log</h4>
+                                    <span class="hp-activity-badge">Latest Broadcasts</span>
+                                </div>
+                                <div id="activity-list" class="hp-activity-list">
+                                    <div class="hp-activity-loading">
+                                        <span class="dashicons dashicons-update hp-spin"></span>
+                                        <p>Loading activity log...</p>
+                                    </div>
                                 </div>
                             </div>
+
                         </div>
 
                     </div>
@@ -217,7 +269,6 @@ class HashPoster_Analytics {
         );
     }
 
-
     /**
      * Get analytics data for date range
      */
@@ -233,13 +284,15 @@ class HashPoster_Analytics {
         }
         if ( ! $table_verified_range ) {
             return array(
-                'total_posts'         => 0, 'successful_posts' => 0,
-                'failed_posts'        => 0, 'success_rate'     => 0,
-                'platform_data'       => array(), 'recent_activity'  => array(),
+                'total_posts'         => 0,
+                'successful_posts'    => 0,
+                'failed_posts'        => 0,
+                'success_rate'        => 0,
+                'platform_data'       => array(),
+                'recent_activity'     => array(),
                 'most_active_platform'=> null
             );
         }
-
 
         // Get total posts
         $total_posts = $wpdb->get_var( $wpdb->prepare(
@@ -267,14 +320,29 @@ class HashPoster_Analytics {
             $date_from, $date_to
         ), ARRAY_A );
 
-        // Get recent activity
+        // Get recent activity with joined post title
         $recent_activity = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$table_name}
-             WHERE DATE(published_at) BETWEEN %s AND %s
-             ORDER BY published_at DESC
-             LIMIT 10",
+            "SELECT a.*, p.post_title
+             FROM {$table_name} a
+             LEFT JOIN {$wpdb->posts} p ON a.post_id = p.ID
+             WHERE DATE(a.published_at) BETWEEN %s AND %s
+             ORDER BY a.published_at DESC
+             LIMIT 15",
             $date_from, $date_to
         ), ARRAY_A );
+
+        if ( ! empty( $recent_activity ) ) {
+            foreach ( $recent_activity as &$row ) {
+                $pid = absint( $row['post_id'] );
+                $raw_title = ! empty( $row['post_title'] ) ? trim( wp_strip_all_tags( $row['post_title'] ) ) : '';
+                if ( empty( $raw_title ) ) {
+                    $raw_title = sprintf( __( 'Post #%d', 'hashposter' ), $pid );
+                }
+                $row['post_title'] = $raw_title;
+                $row['edit_url']   = admin_url( 'post.php?post=' . $pid . '&action=edit' );
+            }
+            unset( $row );
+        }
 
         // Get most active platform
         $most_active_platform = $wpdb->get_row( $wpdb->prepare(
@@ -301,7 +369,6 @@ class HashPoster_Analytics {
      * Create analytics table
      */
     public static function create_analytics_table() {
-
         global $wpdb;
 
         $table_name = $wpdb->prefix . 'hashposter_analytics';
@@ -333,7 +400,6 @@ class HashPoster_Analytics {
         $table_name = $wpdb->prefix . 'hashposter_analytics';
         $date_from = date( 'Y-m-d', strtotime( "-{$days} days" ) );
 
-        // Check if table exists
         $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$table_name}'" );
         if ( ! $table_exists ) {
             return array(

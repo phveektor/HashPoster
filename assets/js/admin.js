@@ -14,20 +14,25 @@
         const titleDesc = document.getElementById('hp_active_tab_desc');
 
         if (navItems.length > 0) {
-            // Restore active tab from SessionStorage
-            const storedTab = sessionStorage.getItem('hp_active_tab');
-            if (storedTab) {
-                const targetBtn = document.querySelector(`.hp-nav-item[data-tab="${storedTab}"]`);
-                if (targetBtn) {
-                    activateTab(targetBtn, storedTab);
+            // Restore active tab from SessionStorage ONLY if tab panels exist on this page
+            if (tabPanels.length > 0) {
+                const storedTab = sessionStorage.getItem('hp_active_tab');
+                if (storedTab) {
+                    const targetBtn = document.querySelector(`.hp-nav-item[data-tab="${storedTab}"]`);
+                    if (targetBtn) {
+                        activateTab(targetBtn, storedTab);
+                    }
                 }
             }
 
             navItems.forEach(item => {
                 item.addEventListener('click', function(e) {
-                    e.preventDefault();
                     const tabId = this.getAttribute('data-tab');
-                    activateTab(this, tabId);
+                    if (tabId) {
+                        e.preventDefault();
+                        activateTab(this, tabId);
+                    }
+                    // Otherwise let standard link navigation proceed
                 });
             });
         }
