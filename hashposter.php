@@ -2,7 +2,7 @@
 /*
 Plugin Name: HashPoster
 Description: Lightweight autoposter to publish WordPress content to selected social media platforms with short link support.
-Version: 2.0
+Version: 2.1.0
 Author: Phveektor
 Author URI: https://github.com/phveektor
 */
@@ -16,7 +16,7 @@ if ( ! function_exists( 'plugin_dir_path' ) || ! function_exists( 'plugin_dir_ur
 
 define( 'HASHPOSTER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'HASHPOSTER_URL', plugin_dir_url( __FILE__ ) );
-define( 'HASHPOSTER_VERSION', '2.0' );
+define( 'HASHPOSTER_VERSION', '2.1.0' );
 
 // GitHub Updater via Plugin Update Checker
 if ( file_exists( HASHPOSTER_PATH . 'includes/plugin-update-checker/plugin-update-checker.php' ) ) {
@@ -109,24 +109,20 @@ class HashPoster {
     }
 
     public function init() {
-        // Initialize settings page
-        new HashPoster_Settings();
-
-        // Initialize post publisher
+        // Core post publisher (handles transition_post_status and cron posting)
         new HashPoster_Post_Publisher();
 
-        // Initialize analytics
+        // Analytics tracking listener (listens for hashposter_post_published)
         new HashPoster_Analytics();
 
-    // Initialize new features
-    new HashPoster_Bulk_Posting();
-
-    // Initialize publisher (replaces separate pipeline)
-    $publisher = new HashPoster_Publisher();
-    if ( function_exists( 'add_action' ) ) {
-        // Enqueue admin assets
-        add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
-    }
+        // Admin-only classes and assets (settings, bulk-posting, AJAX)
+        if ( is_admin() ) {
+            new HashPoster_Settings();
+            new HashPoster_Bulk_Posting();
+            if ( function_exists( 'add_action' ) ) {
+                add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
+            }
+        }
     }
 
     public function enqueue_admin_assets( $hook ) {

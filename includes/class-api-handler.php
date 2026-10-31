@@ -85,13 +85,12 @@ class HashPoster_API_Handler {
                 }
             }
             
-            // Exponential backoff: 1s, 2s, 4s
+            // Short micro-pause (250ms) instead of blocking multi-second sleep to protect PHP worker pool
             if ( $attempt < $max_retries ) {
-                $wait_time = pow( 2, $attempt );
                 if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-                    error_log( '[HashPoster] API retry attempt ' . ( $attempt + 1 ) . '/' . $max_retries . ', waiting ' . $wait_time . 's' );
+                    error_log( '[HashPoster] API retry attempt ' . ( $attempt + 1 ) . '/' . $max_retries . ' (250ms micro-pause)' );
                 }
-                sleep( $wait_time );
+                usleep( 250000 );
             }
             
             $attempt++;
@@ -1353,35 +1352,7 @@ class HashPoster_API_Handler {
         return $data['link'] ?? ($data['id'] ?? '');
     }
 
-    /**
-     * Remote post to another WordPress site using Application Passwords (REST API)
-     */
-    private function remote_post_to_wordpress($site_url, $username, $app_password, $post_data) {
-        if (empty($site_url) || empty($username) || empty($app_password)) {
-            return new WP_Error('missing_credentials', 'Missing WordPress remote posting credentials');
-        }
 
-        $endpoint = rtrim($site_url, '/') . '/wp-json/wp/v2/posts';
-        $auth = base64_encode($username . ':' . $app_password);
-        $args = array(
-            'headers' => array(
-                'Authorization' => 'Basic ' . $auth,
-                'Content-Type' => 'application/json'
-            ),
-            'body' => wp_json_encode($post_data),
-            'timeout' => 15,
-        );
-
-        $resp = wp_remote_post($endpoint, $args);
-        if (is_wp_error($resp)) return $resp;
-        $code = wp_remote_retrieve_response_code($resp);
-        $body = wp_remote_retrieve_body($resp);
-        if ($code !== 201 && $code !== 200) {
-            return new WP_Error('remote_post_error', 'Remote WordPress post failed: ' . $body);
-        }
-
-        return json_decode($body, true);
-    }
 
     /**
      * Handle and process an error
@@ -1775,58 +1746,7 @@ class HashPoster_API_Handler {
         return $stats;
     }
 
-    /**
-     * Post to Twitter (X) using API v2 and OAuth 1.0a User Context
-     */
-    public function post_to_twitter( $post, $content ) {
-        $creds = $this->credentials['twitter'] ?? array();
-        
-        if ( empty($creds['api_key']) || empty($creds['api_secret']) || empty($creds['access_token']) || empty($creds['access_token_secret']) ) {
-            return new WP_Error( 'missing_credentials', 'Twitter API credentials not configured' );
-        }
 
-        $endpoint = self::TWITTER_API_BASE . '/tweets';
-        
-        $body = array(
-            'text' => $content
-        );
-
-        $oauth_header = $this->generate_twitter_oauth_header( $endpoint, 'POST', $creds );
-
-        $args = array(
-            'headers' => array(
-                'Authorization' => $oauth_header,
-                'Content-Type'  => 'application/json'
-            ),
-            'body'    => wp_json_encode( $body ),
-            'timeout' => 15
-        );
-
-        $response = $this->wp_remote_post_with_retry( $endpoint, $args );
-
-        if ( is_wp_error( $response ) ) {
-            return $response;
-        }
-
-        $code = wp_remote_retrieve_response_code( $response );
-        $body = json_decode( wp_remote_retrieve_body( $response ), true );
-
-        if ( $code === 201 && !empty($body['data']['id']) ) {
-            return array(
-                'success' => true,
-                'post_id' => $body['data']['id'],
-                'url'     => 'https://twitter.com/user/status/' . $body['data']['id']
-            );
-        }
-
-        // Handle Twitter specific errors
-        $error_msg = $body['detail'] ?? ($body['title'] ?? 'Unknown Twitter API error');
-        if ( isset($body['errors'][0]['message']) ) {
-            $error_msg = $body['errors'][0]['message'];
-        }
-
-        return new WP_Error( 'twitter_api_error', 'Twitter Error: ' . $error_msg, array( 'status' => $code, 'response' => $body ) );
-    }
 
     /**
      * Generate OAuth 1.0a Authorization header for Twitter

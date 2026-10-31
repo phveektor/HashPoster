@@ -349,301 +349,58 @@ class HashPoster_Post_Publisher {
             return;
         }
 
-        // Get enabled platforms using consolidated method
-        $active_platforms = $this->get_active_platforms_for_post( $post_id );
-
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[HashPoster] Scheduled post ' . $post_id . ' - Final active platforms: ' . implode(', ', $active_platforms));
-        }
-
-        if (empty($active_platforms)) {
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Scheduled post ' . $post_id . ' - No active platforms, nothing to autopost.');
+        // Prevent concurrent execution for the same post across workers / requests
+        $lock_key = 'hashposter_lock_' . $post_id;
+        if ( get_transient( $lock_key ) ) {
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( '[HashPoster] Post ' . $post_id . ' is already being published by another worker. Skipping duplicate run.' );
             }
             return;
         }
+        set_transient( $lock_key, time(), 300 ); // 5-minute safety lock
 
-        // Use central publisher to handle pipeline and API interaction
-        $publisher = new HashPoster_Publisher();
-        $publish_result = $publisher->publish_post_to_platforms( $post, $active_platforms );
+        try {
+            // Get enabled platforms using consolidated method
+            $active_platforms = $this->get_active_platforms_for_post( $post_id );
 
-        // Store results and mark autoposted if applicable
-        if ( isset( $publish_result['platforms'] ) ) {
-            update_post_meta( $post_id, '_hashposter_results', $publish_result['platforms'] );
-        }
-
-        if ( ! empty( $publish_result['success'] ) ) {
-            update_post_meta( $post_id, '_hashposter_autoposted', current_time( 'mysql' ) );
             if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log('[HashPoster] Scheduled post ' . $post_id . ' successfully autoposted');
+                error_log('[HashPoster] Scheduled post ' . $post_id . ' - Final active platforms: ' . implode(', ', $active_platforms));
             }
-        }
 
-        return ! empty( $publish_result['success'] );
-    }
-
-    private function prepare_content($post_id, $post) {
-        // Get template from options
-        $post_cards = get_option('hashposter_post_cards', array());
-        $template = !empty($post_cards['template']) ? $post_cards['template'] : '{title} {url}';
-
-        // For optimal social media cards, keep text concise
-        $title = get_the_title($post_id);
-        $permalink = get_permalink($post_id);
-
-        // Get a concise excerpt
-        $excerpt = '';
-        if (has_excerpt($post_id)) {
-            $excerpt = get_the_excerpt($post_id);
-        } else {
-            $excerpt = wp_trim_words(strip_shortcodes(strip_tags($post->post_content)), 30);
-        }
-
-        // Core replacement data
-        $data = [
-            'title' => $title,
-            'url' => $permalink,
-            'excerpt' => $excerpt,
-            'author' => get_the_author_meta('display_name', $post->post_author),
-            'date' => get_the_date('', $post_id),
-            'site_name' => get_bloginfo('name'),
-        ];
-
-        // Get tags
-        $tags_arr = get_the_tags($post_id);
-        $data['tags'] = '';
-        if ($tags_arr) {
-            $tag_names = array_map(function($tag) { return $tag->name; }, $tags_arr);
-            $data['tags'] = implode(', ', $tag_names);
-        }
-
-        // Get shortlinks if requested
-        $shortlinks = get_option('hashposter_shortlinks', array());
-        $use_bitly = !empty($shortlinks['bitly']['active']) && !empty($shortlinks['bitly']['token']);
-
-        // Only generate short URL if the template contains {short_url}
-        if (strpos($template, '{short_url}') !== false) {
-            if ($use_bitly) {
-                $api = new HashPoster_API_Handler();
-                $data['short_url'] = $api->get_short_url($permalink, $post_id);
-
+            if (empty($active_platforms)) {
                 if (defined('WP_DEBUG') && WP_DEBUG) {
-                    error_log('[HashPoster] Generated Bitly short URL: ' . $data['short_url']);
+                    error_log('[HashPoster] Scheduled post ' . $post_id . ' - No active platforms, nothing to autopost.');
                 }
-            } else {
-                // Always use full permalink instead of WordPress shortlink for better social media previews
-                $data['short_url'] = $permalink;
+                delete_transient( $lock_key );
+                return;
             }
-        } else {
-            $data['short_url'] = $permalink; // Default if not used in template
-        }
 
-        // Replace all tags in the template
-        $content = $template;
-        foreach ($data as $key => $value) {
-            $content = str_replace('{'.$key.'}', $value, $content);
-        }
+            // Use central publisher to handle pipeline and API interaction
+            $publisher = new HashPoster_Publisher();
+            $publish_result = $publisher->publish_post_to_platforms( $post, $active_platforms );
 
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('[HashPoster] Final content prepared: ' . $content);
-        }
-
-        return $content;
-    }
-
-    /**
-     * Format content for specific social media platforms with OG-compliant formatting
-     *
-     * @param string $platform The social media platform
-     * @param int $post_id Post ID
-     * @param object $post Post object
-     * @return string Formatted content for the platform
-     */
-    public function format_content_for_platform($platform, $post_id, $post, $base_content = null) {
-        // Use provided base content (from pipeline) if available, otherwise regenerate
-        $base_content = $base_content ?? $this->prepare_content($post_id, $post);
-
-        switch ($platform) {
-            case 'facebook':
-                return $this->format_for_facebook($base_content, $post_id);
-            case 'linkedin':
-                return $this->format_for_linkedin($base_content, $post_id);
-            case 'bluesky':
-                return $this->format_for_bluesky($base_content, $post_id);
-            case 'telegram':
-                return $this->format_for_telegram($base_content, $post_id);
-            // Pinterest support removed plugin-wide.
-            default:
-                return $base_content;
-        }
-    }
-
-    /**
-     * Format content for X (Twitter) with optimal length
-     */
-    /**
-     * Format content for Facebook with rich formatting and UTM tracking
-     */
-    private function format_for_facebook($content, $post_id) {
-        // Facebook supports longer posts (up to 63,206 characters), but optimal engagement is 40-80 characters
-        // We'll aim for a balanced approach with excerpt and call-to-action
-
-        $excerpt = get_the_excerpt($post_id);
-
-        // Build engaging Facebook post
-        $facebook_content = $content;
-
-        // Add excerpt if it's substantial and not already included
-        if (!empty($excerpt) && strlen($excerpt) > 30 && strpos($content, $excerpt) === false) {
-            // Limit excerpt to 150 characters for Facebook
-            $excerpt = strlen($excerpt) > 150 ? substr($excerpt, 0, 147) . '...' : $excerpt;
-            $facebook_content .= "\n\n" . $excerpt;
-        }
-
-        // Add call-to-action
-        $facebook_content .= "\n\n🔗 Read the full article on our blog!";
-
-        return $facebook_content;
-    }
-
-    /**
-     * Extract first paragraph from content
-     */
-    private function get_first_paragraph($content) {
-        // Remove shortcodes
-        $content = strip_shortcodes($content);
-        
-        // Remove HTML tags but preserve paragraph structure
-        $content = wp_strip_all_tags($content);
-        
-        // Split by paragraph breaks (double newlines or </p> tags)
-        $paragraphs = preg_split('/\n\s*\n|\r\n\s*\r\n/', trim($content));
-        
-        if (!empty($paragraphs) && !empty($paragraphs[0])) {
-            $first_para = trim($paragraphs[0]);
-            // Limit to reasonable length (around 200-300 characters for readability)
-            if (strlen($first_para) > 300) {
-                $first_para = substr($first_para, 0, 297) . '...';
+            // Store results and mark autoposted if applicable
+            if ( isset( $publish_result['platforms'] ) ) {
+                update_post_meta( $post_id, '_hashposter_results', $publish_result['platforms'] );
             }
-            return $first_para;
+
+            if ( ! empty( $publish_result['success'] ) ) {
+                update_post_meta( $post_id, '_hashposter_autoposted', current_time( 'mysql' ) );
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log('[HashPoster] Scheduled post ' . $post_id . ' successfully autoposted');
+                }
+            }
+
+            delete_transient( $lock_key );
+            return ! empty( $publish_result['success'] );
+
+        } catch ( Exception $e ) {
+            delete_transient( $lock_key );
+            error_log( '[HashPoster] Exception during scheduled post ' . $post_id . ': ' . $e->getMessage() );
+            return false;
         }
-        
-        return '';
     }
 
-    /**
-     * Format content for LinkedIn with professional tone
-     */
-    private function format_for_linkedin($content, $post_id) {
-        // LinkedIn allows up to 3,000 characters but optimal engagement is 100-200 characters
-        // Professional tone with article-style formatting
-        
-        // For LinkedIn, use ONLY the first paragraph (more professional, focused)
-        $first_paragraph = $this->get_first_paragraph($content);
-        if (empty($first_paragraph)) {
-            // Fallback to excerpt if no paragraph found
-            $first_paragraph = get_the_excerpt($post_id);
-        }
-
-        // Add the first paragraph and call-to-action
-        $linkedin_content = $first_paragraph;
-        $linkedin_content .= "\n\n💡 What are your thoughts on this topic? Share in the comments!";
-
-        return $linkedin_content;
-    }
-
-    /**
-     * Format content for Bluesky with modern, conversational tone and UTM tracking
-     */
-    private function format_for_bluesky($content, $post_id) {
-        // Bluesky has 300 character limit, prefers conversational tone with emojis
-
-        $max_length = 300;
-        $url = $this->add_utm_parameters(get_permalink($post_id), 'bluesky');
-
-        // Always use full permalink for better social media preview cards
-
-        // Calculate space needed
-        $url_length = strlen($url);
-        $reserved_space = $url_length + 4; // spaces and emoji
-
-        $available_content_length = $max_length - $reserved_space;
-
-        // Add emoji based on content
-        $content = $this->add_content_emojis($content, $post_id);
-
-        // Check if URL is already in content
-        $url_in_content = strpos($content, $url) !== false;
-
-        // If URL not in content, reserve space for it
-        if (!$url_in_content) {
-            $available_content_length -= ($url_length + 1);
-        }
-
-        // Truncate content if needed
-        if (strlen($content) > $available_content_length) {
-            $content = substr($content, 0, $available_content_length - 3) . '...';
-        }
-
-        // Build final content
-        $final_content = $content;
-
-        // Add URL if not present
-        if (!$url_in_content) {
-            $final_content .= ' ' . $url;
-        }
-
-        // Final safety check
-        if (strlen($final_content) > $max_length) {
-            $final_content = substr($final_content, 0, $max_length - 3) . '...';
-        }
-
-        return $final_content;
-    }
-
-    /**
-     * Format content for Telegram with rich formatting and UTM tracking
-     */
-    private function format_for_telegram($content, $post_id) {
-        // Telegram supports long messages (up to 4096 characters) with rich formatting
-        // Use markdown formatting for better presentation
-
-        $title = get_the_title($post_id);
-        $url = $this->add_utm_parameters(get_permalink($post_id), 'telegram');
-        $excerpt = get_the_excerpt($post_id);
-
-        // Build formatted Telegram message with markdown
-        $telegram_content = "*" . $title . "*\n\n";
-        
-        // Add main content
-        $telegram_content .= $content;
-
-        // Add excerpt if substantial and not redundant
-        if (!empty($excerpt) && strlen($excerpt) > 30 && strpos($content, $excerpt) === false) {
-            $telegram_content .= "\n\n_" . wp_trim_words($excerpt, 50) . "_";
-        }
-
-        // Add call-to-action with link
-        $telegram_content .= "\n\n[Read full article](" . $url . ")";
-
-        // Telegram character limit is 4096, but keep it reasonable for readability
-        if (strlen($telegram_content) > 4000) {
-            // Truncate content while preserving structure
-            $telegram_content = substr($telegram_content, 0, 3970) . "...\n\n[Read full article](" . $url . ")";
-        }
-
-        return $telegram_content;
-    }
-
-    // (Reddit support removed)
-
-    // Pinterest formatting removed.
-
-    // Merged from class-post-controls.php
-
-    /**
-     * Add meta box to post editor
-     */
     public function add_social_posting_meta_box() {
         $post_types = get_post_types( array( 'public' => true ) );
 

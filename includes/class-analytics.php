@@ -196,8 +196,12 @@ class HashPoster_Analytics {
 
         $table_name = $wpdb->prefix . 'hashposter_analytics';
 
-        // Guard: if table doesn't exist yet, skip silently (activation didn't run)
-        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) !== $table_name ) {
+        // Guard: if table doesn't exist yet, skip silently (in-memory cached check)
+        static $table_verified = null;
+        if ( $table_verified === null ) {
+            $table_verified = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) === $table_name );
+        }
+        if ( ! $table_verified ) {
             return;
         }
 
@@ -222,8 +226,12 @@ class HashPoster_Analytics {
 
         $table_name = $wpdb->prefix . 'hashposter_analytics';
 
-        // Ensure table exists (lightweight check)
-        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) !== $table_name ) {
+        // Ensure table exists (in-memory cached check)
+        static $table_verified_range = null;
+        if ( $table_verified_range === null ) {
+            $table_verified_range = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) === $table_name );
+        }
+        if ( ! $table_verified_range ) {
             return array(
                 'total_posts'         => 0, 'successful_posts' => 0,
                 'failed_posts'        => 0, 'success_rate'     => 0,
