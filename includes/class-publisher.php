@@ -241,9 +241,9 @@ class HashPoster_Publisher {
                 $template = $post_cards[ $platform_template_key ] ?? $post_cards['template'] ?? '{title} {excerpt} {short_url}';
 
                 if ( ! empty( $custom_content ) ) {
-                    $content = $this->replace_placeholders( $custom_content, $post );
+                    $content = $this->replace_placeholders( $custom_content, $post, $url );
                 } else {
-                    $content = $this->replace_placeholders( $template, $post );
+                    $content = $this->replace_placeholders( $template, $post, $url );
                 }
 
                 $content = html_entity_decode( $content, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
@@ -253,15 +253,15 @@ class HashPoster_Publisher {
                     $content = str_replace( '{short_url}', $url, $content );
                 }
 
-                // Append URL inline for platforms that need it
-                $needs_url_in_body = in_array( $platform, array( 'bluesky', 'x', 'linkedin' ), true );
+                // Append URL inline for platforms that need it (including Telegram)
+                $needs_url_in_body = in_array( $platform, array( 'bluesky', 'x', 'linkedin', 'telegram' ), true );
                 if ( $needs_url_in_body && strpos( $content, 'http://' ) === false && strpos( $content, 'https://' ) === false ) {
-                    $content = rtrim( $content ) . ' ' . $url;
+                    $content = rtrim( $content ) . "\n\n" . $url;
                 }
                 break;
         }
 
-        return array( 'content' => $content, 'media' => array(), 'url_card_meta' => '', 'url' => $url );
+        return array( 'content' => $content, 'media' => array( 'url' => $url ), 'url_card_meta' => '', 'url' => $url );
     }
 
     /**
@@ -379,8 +379,8 @@ class HashPoster_Publisher {
 
 
 
-    private function replace_placeholders( $content, $post ) {
-        $url = get_permalink( $post );
+    private function replace_placeholders( $content, $post, $platform_url = null ) {
+        $url = ! empty( $platform_url ) ? $platform_url : get_permalink( $post );
 
         $replacements = array(
             '{title}' => $this->get_optimized_title( $post ),
