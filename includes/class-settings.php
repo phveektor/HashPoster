@@ -115,6 +115,15 @@ class HashPoster_Settings {
                                 <?php echo esc_html($tinfo['title']); ?>
                             </a>
                             <?php endforeach; ?>
+                            <hr style="border:none; border-top:1px solid var(--hp-border); margin:12px 16px;">
+                            <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-analytics' ) ); ?>" class="hp-nav-item">
+                                <span class="dashicons dashicons-chart-pie"></span>
+                                Analytics
+                            </a>
+                            <a href="<?php echo esc_url( admin_url( 'admin.php?page=hashposter-bulk-posting' ) ); ?>" class="hp-nav-item">
+                                <span class="dashicons dashicons-grid-view"></span>
+                                Bulk Posting
+                            </a>
                         </nav>
                     </aside>
 

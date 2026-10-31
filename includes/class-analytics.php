@@ -11,7 +11,7 @@ class HashPoster_Analytics {
 
     public function __construct() {
         add_action( 'hashposter_post_published', array( $this, 'track_post_publication' ), 10, 3 );
-        add_action( 'admin_menu', array( $this, 'add_analytics_menu' ) );
+        add_action( 'admin_menu', array( $this, 'add_analytics_menu' ), 20 );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_analytics_assets' ) );
         add_action( 'wp_ajax_hashposter_get_analytics_data', array( $this, 'ajax_get_analytics_data' ) );
     }

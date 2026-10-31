@@ -113,19 +113,20 @@ class HashPoster {
     }
 
     public function init() {
+        // Initialize settings FIRST so parent menu 'hashposter-settings' is registered
+        new HashPoster_Settings();
+
         // Core post publisher (handles transition_post_status and cron posting)
         new HashPoster_Post_Publisher();
 
-        // Analytics tracking listener (listens for hashposter_post_published)
+        // Analytics (tracking hook + submenu page)
         new HashPoster_Analytics();
 
-        // Admin-only classes and assets (settings, bulk-posting, AJAX)
-        if ( is_admin() ) {
-            new HashPoster_Settings();
-            new HashPoster_Bulk_Posting();
-            if ( function_exists( 'add_action' ) ) {
-                add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
-            }
+        // Bulk posting (submenu page)
+        new HashPoster_Bulk_Posting();
+
+        if ( function_exists( 'add_action' ) ) {
+            add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
         }
     }
 

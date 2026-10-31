@@ -25,7 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class HashPoster_Bulk_Posting {
 
     public function __construct() {
-        add_action( 'admin_menu', array( $this, 'add_bulk_posting_menu' ) );
+        add_action( 'admin_menu', array( $this, 'add_bulk_posting_menu' ), 20 );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_bulk_posting_assets' ) );
         add_action( 'wp_ajax_hashposter_bulk_publish', array( $this, 'handle_bulk_publish' ) );
         add_action( 'wp_ajax_hashposter_get_posts_for_bulk', array( $this, 'get_posts_for_bulk' ) );
